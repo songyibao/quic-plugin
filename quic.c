@@ -1,10 +1,21 @@
 //
 // Created by songyibao on 24-2-29.
 //
-#include <stdlib.h>
 
+#include <stdlib.h>
+// #include "quic.h"
 #include "client.h"
-#include <neuron.h>
+#include "neuron.h"
+#include "quic_config.h"
+
+struct neu_plugin {
+    neu_plugin_common_t  common;
+    struct simple_client client;
+    quic_config_t       *config;
+    struct addrinfo     *peer;
+    char                *host;
+    char                *port;
+};
 
 static neu_plugin_t *driver_open(void);
 
@@ -21,7 +32,6 @@ static int driver_validate_tag(neu_plugin_t *plugin, neu_datatag_t *tag);
 static int driver_group_timer(neu_plugin_t *plugin, neu_plugin_group_t *group);
 static int driver_write(neu_plugin_t *plugin, void *req, neu_datatag_t *tag,
                         neu_value_u value);
-
 static const neu_plugin_intf_funs_t plugin_intf_funs = {
     .open    = driver_open,
     .close   = driver_close,
@@ -49,13 +59,6 @@ const neu_plugin_module_t neu_plugin_module = {
     .type            = NEU_NA_TYPE_APP,
     .display         = true,
     .single          = false,
-};
-
-struct neu_plugin {
-    neu_plugin_common_t  common;
-    struct simple_client client;
-    quic_config_t       *config;
-    struct addrinfo     *peer;
 };
 
 static neu_plugin_t *driver_open(void)
@@ -86,36 +89,9 @@ static int driver_init(neu_plugin_t *plugin, bool load)
     client.ssl_ctx       = NULL;
     client.conn          = NULL;
     client.loop          = NULL;
-    int ret              = 0;
 
-    // Create socket.
-    const char *host = "127.0.0.1";
-    const char *port = "4433";
-    // struct addrinfo *peer = NULL;
-    if (create_socket(host, port, &(plugin->peer), &client) != 0) {
-        ret = -1;
-        // goto EXIT;
-        plog_notice(plugin, "node: socket created failed");
-    }
 
-    // Create quic config.
-    plugin->config = quic_config_new();
-    if (plugin->config == NULL) {
-        // fprintf(stderr, "failed to create config\n");
-        ret = -1;
-        // goto EXIT;
-        plog_notice(plugin, "failed to create config");
-    }
-    quic_config_set_max_idle_timeout(plugin->config, 5000);
-    quic_config_set_recv_udp_payload_size(plugin->config, MAX_DATAGRAM_SIZE);
 
-    // Create and set tls config.
-    if (client_load_ssl_ctx(&client) != 0) {
-        ret = -1;
-        // goto EXIT;
-        plog_notice(plugin, "failed to create tls config");
-    }
-    quic_config_set_tls_config(plugin->config, client.ssl_ctx);
 
     plugin->client = client;
     plog_notice(plugin, "node: quic init");
@@ -151,6 +127,37 @@ static int driver_uninit(neu_plugin_t *plugin)
 
 static int driver_start(neu_plugin_t *plugin)
 {
+    // Create socket.
+    // const char *host = "127.0.0.1";
+    // const char *port = "4433";
+    // struct addrinfo *peer = NULL;
+    // int ret              = 0;
+    plog_notice(plugin, "bofore create socket, host:%s, port:%s",plugin->host,plugin->port);
+    if (create_socket(plugin->host, plugin->port, &(plugin->peer), &plugin->client) !=
+        0) {
+        // ret = -1;
+        // goto EXIT;
+        plog_notice(plugin, "node: socket created failed");
+        }
+
+    // Create quic config.
+    plugin->config = quic_config_new();
+    if (plugin->config == NULL) {
+        // fprintf(stderr, "failed to create config\n");
+        // ret = -1;
+        // goto EXIT;
+        plog_notice(plugin, "failed to create config");
+    }
+    quic_config_set_max_idle_timeout(plugin->config, 5000);
+    quic_config_set_recv_udp_payload_size(plugin->config, MAX_DATAGRAM_SIZE);
+
+    // Create and set tls config.
+    if (client_load_ssl_ctx(&plugin->client) != 0) {
+        // ret = -1;
+        // goto EXIT;
+        plog_notice(plugin, "failed to create tls config");
+    }
+    quic_config_set_tls_config(plugin->config, plugin->client.ssl_ctx);
     // Create quic endpoint
     plugin->client.quic_endpoint = quic_endpoint_new(
         plugin->config, false, &quic_transport_methods, &(plugin->client),
@@ -201,11 +208,115 @@ static int driver_stop(neu_plugin_t *plugin)
     return 0;
 }
 
-static int driver_config(neu_plugin_t *plugin, const char *config)
+static int parse_config(neu_plugin_t *plugin, const char *setting,
+                        char **host_p, uint16_t *port_p)
 {
-    plog_notice(plugin, "config: %s", config);
+    char           *err_param = NULL;
+    neu_json_elem_t host      = { .name = "host", .t = NEU_JSON_STR };
+    neu_json_elem_t port      = { .name = "port", .t = NEU_JSON_INT };
+
+    if (0 != neu_parse_param(setting, &err_param, 2, &host, &port)) {
+        plog_error(plugin, "parsing setting fail, key: `%s`", err_param);
+        goto error;
+    }
+
+    // host, required
+    if (0 == strlen(host.v.val_str)) {
+        plog_error(plugin, "setting invalid host: `%s`", host.v.val_str);
+        goto error;
+    }
+
+    // port, required
+    if (0 == port.v.val_int || port.v.val_int > 65535) {
+        plog_error(plugin, "setting invalid port: %" PRIi64, port.v.val_int);
+        goto error;
+    }
+
+    *host_p = host.v.val_str;
+    *port_p = port.v.val_int;
+
+    plog_notice(plugin, "config host:%s port:%" PRIu16, *host_p, *port_p);
 
     return 0;
+
+error:
+    free(err_param);
+    free(host.v.val_str);
+    return -1;
+}
+int mqtt_config_parse(neu_plugin_t *plugin, const char *setting, char *chost,
+                      char *cport)
+{
+    int   ret       = 0;
+    char *err_param = NULL;
+
+    neu_json_elem_t host = { .name = "host", .t = NEU_JSON_STR };
+    neu_json_elem_t port = { .name = "port", .t = NEU_JSON_INT };
+
+    if (NULL == setting) {
+        plog_error(plugin, "test");
+        plog_error(plugin, "invalid argument, null pointer");
+        return -1;
+    }
+
+    ret = neu_parse_param(setting, &err_param, 2, &host, &port);
+    if (0 != ret) {
+        plog_error(plugin, "parsing setting fail, key: `%s`", err_param);
+        goto error;
+    }
+
+    // host, required
+    if (0 == strlen(host.v.val_str)) {
+        plog_error(plugin, "setting invalid host: `%s`", host.v.val_str);
+        goto error;
+    }
+
+    // port, required
+    if (0 == port.v.val_int || port.v.val_int > 65535) {
+        plog_error(plugin, "setting invalid port: %" PRIi64, port.v.val_int);
+        goto error;
+    }
+    cport = (char *) malloc(sizeof(char) * 10);
+    chost = host.v.val_str;
+    snprintf(cport, 10, "%lld", (long long) port.v.val_int);
+
+    plog_notice(plugin, "config host            : %s", chost);
+    plog_notice(plugin, "config port            : %s",cport);
+    plugin->host = chost;
+    plugin->port = cport;
+    return 0;
+
+error:
+    free(err_param);
+    free(host.v.val_str);
+    // ?
+    // free(port.v.val_int);
+    return -1;
+}
+static int driver_config(neu_plugin_t *plugin, const char *setting)
+{
+    int                   rv            = 0;
+
+    if (0 != mqtt_config_parse(plugin, setting, plugin->host, plugin->port)) {
+        rv = NEU_ERR_NODE_SETTING_INVALID;
+        goto error;
+    }
+
+    // stop the plugin if started
+    // if (plugin->started) {
+    //     stop(plugin);
+    // }
+
+    // check we could start the plugin with the new setting
+
+    plog_notice(plugin, "config host:%s port:%s",plugin->host,plugin->port);
+
+
+    return rv;
+
+error:
+    plog_error(plugin, "config failure");
+    return rv;
 }
 
 static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,

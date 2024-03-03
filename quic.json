@@ -1,59 +1,26 @@
 {
-  "tag_regex": [
-    {
-      "type": 3,
-      "regex": "[1-9]+![3-4][0-9]+(#B|#L|)$"
-    },
-    {
-      "type": 4,
-      "regex": "[1-9]+![3-4][0-9]+(#B|#L|)$"
-    },
-    {
-      "type": 5,
-      "regex": "[1-9]+![3-4][0-9]+(#BB|#BL|#LL|#LB|)$"
-    },
-    {
-      "type": 6,
-      "regex": "[1-9]+![3-4][0-9]+(#BB|#BL|#LL|#LB|)$"
-    },
-    {
-      "type": 9,
-      "regex": "[1-9]+![3-4][0-9]+(#BB|#BL|#LL|#LB|)$"
-    },
-    {
-      "type": 11,
-      "regex": "[1-9]+!([0-1][0-9]+|[3-4][0-9]+.([0-9]|[0-1][0-5]))$"
-    }
-  ],
   "host": {
-    "name": "host",
-    "description": "local ip in server mode, remote device ip in client mode",
+    "name": "Server Host",
+    "name_zh": "服务器地址",
+    "description": "QUIC server host",
+    "description_zh": "QUIC 服务器地址",
     "attribute": "required",
     "type": "string",
+    "default": "example.remote.ip",
     "valid": {
-      "regex": "/^((2[0-4]\\d|25[0-5]|[01]?\\d\\d?)\\.){3}(2[0-4]\\d|25[0-5]|[01]?\\d\\d?)$/",
-      "length": 30
+      "length": 255
     }
   },
   "port": {
-    "name": "port",
-    "description": "local port in server mode, remote device port in client mode",
+    "name": "Server Port",
+    "name_zh": "服务器端口",
+    "description": "QUIC server port",
+    "description_zh": "QUIC 服务器端口",
     "attribute": "required",
     "type": "int",
-    "default": 502,
+    "default": 4433,
     "valid": {
-      "min": 1,
-      "max": 65535
-    }
-  },
-  "timeout": {
-    "name": "timeout",
-    "description": "recv msg timeout(ms)",
-    "attribute": "required",
-    "type": "int",
-    "default": 3000,
-    "valid": {
-      "min": 1000,
+      "min": 1024,
       "max": 65535
     }
   }

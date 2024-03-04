@@ -3,11 +3,11 @@
 //
 
 #include <stdlib.h>
-// #include "quic.h"
-#include "client.h"
+//#include "client.h"
 #include "neuron.h"
 #include "quic_config.h"
-
+#include "quic.h"
+#include "quic_handle.h"
 struct neu_plugin {
     neu_plugin_common_t  common;
     struct simple_client client;
@@ -17,21 +17,7 @@ struct neu_plugin {
     char                *port;
 };
 
-static neu_plugin_t *driver_open(void);
 
-static int driver_close(neu_plugin_t *plugin);
-static int driver_init(neu_plugin_t *plugin, bool load);
-static int driver_uninit(neu_plugin_t *plugin);
-static int driver_start(neu_plugin_t *plugin);
-static int driver_stop(neu_plugin_t *plugin);
-static int driver_config(neu_plugin_t *plugin, const char *config);
-static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
-                          void *data);
-
-static int driver_validate_tag(neu_plugin_t *plugin, neu_datatag_t *tag);
-static int driver_group_timer(neu_plugin_t *plugin, neu_plugin_group_t *group);
-static int driver_write(neu_plugin_t *plugin, void *req, neu_datatag_t *tag,
-                        neu_value_u value);
 static const neu_plugin_intf_funs_t plugin_intf_funs = {
     .open    = driver_open,
     .close   = driver_close,
@@ -90,9 +76,6 @@ static int driver_init(neu_plugin_t *plugin, bool load)
     client.conn          = NULL;
     client.loop          = NULL;
 
-
-
-
     plugin->client = client;
     plog_notice(plugin, "node: quic init");
 
@@ -132,13 +115,14 @@ static int driver_start(neu_plugin_t *plugin)
     // const char *port = "4433";
     // struct addrinfo *peer = NULL;
     // int ret              = 0;
-    plog_notice(plugin, "bofore create socket, host:%s, port:%s",plugin->host,plugin->port);
-    if (create_socket(plugin->host, plugin->port, &(plugin->peer), &plugin->client) !=
-        0) {
+    plog_notice(plugin, "bofore create socket, host:%s, port:%s", plugin->host,
+                plugin->port);
+    if (create_socket(plugin->host, plugin->port, &(plugin->peer),
+                      &plugin->client) != 0) {
         // ret = -1;
         // goto EXIT;
         plog_notice(plugin, "node: socket created failed");
-        }
+    }
 
     // Create quic config.
     plugin->config = quic_config_new();
@@ -174,30 +158,30 @@ static int driver_start(neu_plugin_t *plugin)
     ev_init(&(plugin->client.timer), timeout_callback);
     plugin->client.timer.data = &(plugin->client);
 
-    int ret;
-    // Connect to server.
-    ret = quic_endpoint_connect(
-        plugin->client.quic_endpoint,
-        (struct sockaddr *) &(plugin->client.local_addr),
-        plugin->client.local_addr_len, plugin->peer->ai_addr,
-        plugin->peer->ai_addrlen, NULL /* client_name*/, NULL /* session */,
-        0 /* session_len */, NULL /* token */, 0 /* token_len */,
-        NULL /*index*/);
-    if (ret < 0) {
-        fprintf(stderr, "failed to connect to client: %d\n", ret);
-        ret = -1;
-        // goto EXIT;
-        plog_notice(plugin, "failed to connect to client: ");
-    }
-    process_connections(&(plugin->client));
-
-    // Start event loop.
-    ev_io watcher;
-    ev_io_init(&watcher, read_callback, plugin->client.sock, EV_READ);
-    ev_io_start(plugin->client.loop, &watcher);
-    watcher.data = &(plugin->client);
-    ev_loop(plugin->client.loop, 0);
-    plog_notice(plugin, "node: quic start");
+//    int ret;
+//    // Connect to server.
+//    ret = quic_endpoint_connect(
+//        plugin->client.quic_endpoint,
+//        (struct sockaddr *) &(plugin->client.local_addr),
+//        plugin->client.local_addr_len, plugin->peer->ai_addr,
+//        plugin->peer->ai_addrlen, NULL /* client_name*/, NULL /* session */,
+//        0 /* session_len */, NULL /* token */, 0 /* token_len */,
+//        NULL /*index*/);
+//    if (ret < 0) {
+//        fprintf(stderr, "failed to connect to client: %d\n", ret);
+//        ret = -1;
+//        // goto EXIT;
+//        plog_notice(plugin, "failed to connect to client: ");
+//    }
+//    process_connections(&(plugin->client));
+//
+//    // Start event loop.
+//    ev_io watcher;
+//    ev_io_init(&watcher, read_callback, plugin->client.sock, EV_READ);
+//    ev_io_start(plugin->client.loop, &watcher);
+//    watcher.data = &(plugin->client);
+//    ev_loop(plugin->client.loop, 0);
+//    plog_notice(plugin, "node: quic start");
 
     return 0;
 }
@@ -281,7 +265,7 @@ int mqtt_config_parse(neu_plugin_t *plugin, const char *setting, char *chost,
     snprintf(cport, 10, "%lld", (long long) port.v.val_int);
 
     plog_notice(plugin, "config host            : %s", chost);
-    plog_notice(plugin, "config port            : %s",cport);
+    plog_notice(plugin, "config port            : %s", cport);
     plugin->host = chost;
     plugin->port = cport;
     return 0;
@@ -295,7 +279,7 @@ error:
 }
 static int driver_config(neu_plugin_t *plugin, const char *setting)
 {
-    int                   rv            = 0;
+    int rv = 0;
 
     if (0 != mqtt_config_parse(plugin, setting, plugin->host, plugin->port)) {
         rv = NEU_ERR_NODE_SETTING_INVALID;
@@ -309,8 +293,7 @@ static int driver_config(neu_plugin_t *plugin, const char *setting)
 
     // check we could start the plugin with the new setting
 
-    plog_notice(plugin, "config host:%s port:%s",plugin->host,plugin->port);
-
+    plog_notice(plugin, "config host:%s port:%s", plugin->host, plugin->port);
 
     return rv;
 
@@ -322,11 +305,55 @@ error:
 static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
                           void *data)
 {
-    (void) data;
-    (void) plugin;
-    (void) head;
+    neu_err_code_e error = NEU_ERR_SUCCESS;
 
-    return 0;
+    // update cached messages number per seconds
+//    if (NULL != plugin->client &&
+//        (global_timestamp - plugin->cache_metric_update_ts) >= 1000) {
+//        NEU_PLUGIN_UPDATE_METRIC(
+//            plugin, NEU_METRIC_CACHED_MSGS_NUM,
+//            neu_mqtt_client_get_cached_msgs_num(plugin->client), NULL);
+//        plugin->cache_metric_update_ts = global_timestamp;
+//    }
+
+    switch (head->type) {
+    case NEU_RESP_ERROR:
+//        error = handle_write_response(plugin, head->ctx, data);
+        break;
+    case NEU_RESP_READ_GROUP:
+        error = handle_read_response(plugin, head->ctx, data);
+        break;
+    case NEU_REQRESP_TRANS_DATA: {
+        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 1, NULL);
+        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 1, NULL);
+        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 1, NULL);
+        error = handle_trans_data(plugin, data);
+        break;
+    }
+    case NEU_REQ_SUBSCRIBE_GROUP:
+        error = handle_subscribe_group(plugin, data);
+        break;
+    case NEU_REQ_UPDATE_SUBSCRIBE_GROUP:
+        error = handle_update_subscribe(plugin, data);
+        break;
+    case NEU_REQ_UNSUBSCRIBE_GROUP:
+        error = handle_unsubscribe_group(plugin, data);
+        break;
+    case NEU_REQ_UPDATE_GROUP:
+        error = handle_update_group(plugin, data);
+        break;
+    case NEU_REQ_UPDATE_NODE:
+        error = handle_update_driver(plugin, data);
+        break;
+    case NEU_REQRESP_NODE_DELETED:
+        error = handle_del_driver(plugin, data);
+        break;
+    default:
+        error = NEU_ERR_MQTT_FAILURE;
+        break;
+    }
+
+    return error;
 }
 
 static int driver_validate_tag(neu_plugin_t *plugin, neu_datatag_t *tag)

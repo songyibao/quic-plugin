@@ -3,20 +3,12 @@
 //
 
 #include <stdlib.h>
-//#include "client.h"
-#include "neuron.h"
-#include "quic_config.h"
-#include "quic.h"
-#include "quic_handle.h"
-struct neu_plugin {
-    neu_plugin_common_t  common;
-    struct simple_client client;
-    quic_config_t       *config;
-    struct addrinfo     *peer;
-    char                *host;
-    char                *port;
-};
 
+#include "client.h"
+#include "neuron.h"
+#include "quic.h"
+#include "quic_config.h"
+#include "quic_handle.h"
 
 static const neu_plugin_intf_funs_t plugin_intf_funs = {
     .open    = driver_open,
@@ -66,8 +58,26 @@ static int driver_close(neu_plugin_t *plugin)
 static int driver_init(neu_plugin_t *plugin, bool load)
 {
     (void) load;
-    // Set logger.
-    quic_set_logger(debug_log, NULL, QUIC_LOG_LEVEL_TRACE);
+    plugin->running = false;
+    // plugin_cache_init(plugin);
+    plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
+    const char *name          = neu_plugin_module.module_name;
+    plog_info(plugin, "initialize plugin: %s", name);
+
+    return 0;
+}
+
+static int driver_uninit(neu_plugin_t *plugin)
+{
+
+    free(plugin);
+    plog_notice(plugin, "quic uninit");
+    return 0;
+}
+
+static int driver_start(neu_plugin_t *plugin)
+{
+    quic_set_logger(debug_log, NULL, QUIC_LOG_LEVEL_INFO);
 
     // Create client.
     struct simple_client client;
@@ -75,120 +85,45 @@ static int driver_init(neu_plugin_t *plugin, bool load)
     client.ssl_ctx       = NULL;
     client.conn          = NULL;
     client.loop          = NULL;
+    client.config = NULL;
 
     plugin->client = client;
-    plog_notice(plugin, "node: quic init");
-
-    return 0;
-}
-
-static int driver_uninit(neu_plugin_t *plugin)
-{
-    // if (peer != NULL) {
-    //     freeaddrinfo(peer);
-    // }
-    if (plugin->client.ssl_ctx != NULL) {
-        SSL_CTX_free(plugin->client.ssl_ctx);
-    }
-    if (plugin->client.sock > 0) {
-        close(plugin->client.sock);
-    }
-    if (plugin->client.quic_endpoint != NULL) {
-        quic_endpoint_free(plugin->client.quic_endpoint);
-    }
-    if (plugin->client.loop != NULL) {
-        ev_loop_destroy(plugin->client.loop);
-    }
-    if (plugin->config != NULL) {
-        quic_config_free(plugin->config);
-    }
-
-    plog_notice(plugin, "node: lsquic uninit");
-
-    return 0;
-}
-
-static int driver_start(neu_plugin_t *plugin)
-{
-    // Create socket.
-    // const char *host = "127.0.0.1";
-    // const char *port = "4433";
-    // struct addrinfo *peer = NULL;
-    // int ret              = 0;
     plog_notice(plugin, "bofore create socket, host:%s, port:%s", plugin->host,
                 plugin->port);
-    if (create_socket(plugin->host, plugin->port, &(plugin->peer),
+    if (create_socket(plugin->host, plugin->port, &(plugin->client).peer,
                       &plugin->client) != 0) {
         // ret = -1;
-        // goto EXIT;
+        goto error;
         plog_notice(plugin, "node: socket created failed");
     }
 
-    // Create quic config.
-    plugin->config = quic_config_new();
-    if (plugin->config == NULL) {
-        // fprintf(stderr, "failed to create config\n");
-        // ret = -1;
-        // goto EXIT;
-        plog_notice(plugin, "failed to create config");
-    }
-    quic_config_set_max_idle_timeout(plugin->config, 5000);
-    quic_config_set_recv_udp_payload_size(plugin->config, MAX_DATAGRAM_SIZE);
-
-    // Create and set tls config.
-    if (client_load_ssl_ctx(&plugin->client) != 0) {
-        // ret = -1;
-        // goto EXIT;
-        plog_notice(plugin, "failed to create tls config");
-    }
-    quic_config_set_tls_config(plugin->config, plugin->client.ssl_ctx);
-    // Create quic endpoint
-    plugin->client.quic_endpoint = quic_endpoint_new(
-        plugin->config, false, &quic_transport_methods, &(plugin->client),
-        &quic_packet_send_methods, &(plugin->client));
-    if (plugin->client.quic_endpoint == NULL) {
-        // fprintf(stderr, "failed to create quic endpoint\n");
-        // ret = -1;
-        // goto EXIT;
-        plog_notice(plugin, "failed to create quic endpoint");
-    }
-
-    // Init event loop.
-    plugin->client.loop = ev_default_loop(0);
-    ev_init(&(plugin->client.timer), timeout_callback);
-    plugin->client.timer.data = &(plugin->client);
-
-//    int ret;
-//    // Connect to server.
-//    ret = quic_endpoint_connect(
-//        plugin->client.quic_endpoint,
-//        (struct sockaddr *) &(plugin->client.local_addr),
-//        plugin->client.local_addr_len, plugin->peer->ai_addr,
-//        plugin->peer->ai_addrlen, NULL /* client_name*/, NULL /* session */,
-//        0 /* session_len */, NULL /* token */, 0 /* token_len */,
-//        NULL /*index*/);
-//    if (ret < 0) {
-//        fprintf(stderr, "failed to connect to client: %d\n", ret);
-//        ret = -1;
-//        // goto EXIT;
-//        plog_notice(plugin, "failed to connect to client: ");
-//    }
-//    process_connections(&(plugin->client));
-//
-//    // Start event loop.
-//    ev_io watcher;
-//    ev_io_init(&watcher, read_callback, plugin->client.sock, EV_READ);
-//    ev_io_start(plugin->client.loop, &watcher);
-//    watcher.data = &(plugin->client);
-//    ev_loop(plugin->client.loop, 0);
-//    plog_notice(plugin, "node: quic start");
-
     return 0;
+error:
+
+    return -1;
 }
 
 static int driver_stop(neu_plugin_t *plugin)
 {
-    plog_notice(plugin, "node: lsquic stop");
+
+    plog_notice(plugin, "Start stop function");
+    // if (plugin->client.ssl_ctx != NULL) {
+    //     SSL_CTX_free(plugin->client.ssl_ctx);
+    // }
+    // if (plugin->client.sock > 0) {
+    //     close(plugin->client.sock);
+    // }
+    // if (plugin->client.quic_endpoint != NULL) {
+    //     quic_endpoint_free(plugin->client.quic_endpoint);
+    // }
+    // if (plugin->client.loop != NULL) {
+    //     ev_loop_destroy(plugin->client.loop);
+    // }
+    // if (plugin->config != NULL) {
+    //     quic_config_free(plugin->config);
+    // }
+    plog_notice(plugin, "Exit stop function");
+
     return 0;
 }
 
@@ -305,54 +240,55 @@ error:
 static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
                           void *data)
 {
+    plog_notice(plugin,"Start request function");
     neu_err_code_e error = NEU_ERR_SUCCESS;
 
     // update cached messages number per seconds
-//    if (NULL != plugin->client &&
-//        (global_timestamp - plugin->cache_metric_update_ts) >= 1000) {
-//        NEU_PLUGIN_UPDATE_METRIC(
-//            plugin, NEU_METRIC_CACHED_MSGS_NUM,
-//            neu_mqtt_client_get_cached_msgs_num(plugin->client), NULL);
-//        plugin->cache_metric_update_ts = global_timestamp;
-//    }
+    //    if (NULL != plugin->client &&
+    //        (global_timestamp - plugin->cache_metric_update_ts) >= 1000) {
+    //        NEU_PLUGIN_UPDATE_METRIC(
+    //            plugin, NEU_METRIC_CACHED_MSGS_NUM,
+    //            neu_mqtt_client_get_cached_msgs_num(plugin->client), NULL);
+    //        plugin->cache_metric_update_ts = global_timestamp;
+    //    }
 
     switch (head->type) {
-    case NEU_RESP_ERROR:
-//        error = handle_write_response(plugin, head->ctx, data);
-        break;
-    case NEU_RESP_READ_GROUP:
-        error = handle_read_response(plugin, head->ctx, data);
-        break;
+    // case NEU_RESP_ERROR:
+    //     //        error = handle_write_response(plugin, head->ctx, data);
+    //     break;
+    // case NEU_RESP_READ_GROUP:
+    //     error = handle_read_response(plugin, head->ctx, data);
+    //     break;
     case NEU_REQRESP_TRANS_DATA: {
-        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 1, NULL);
-        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 1, NULL);
-        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 1, NULL);
+        // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 1, NULL);
+        // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 1, NULL);
+        // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 1, NULL);
         error = handle_trans_data(plugin, data);
         break;
     }
-    case NEU_REQ_SUBSCRIBE_GROUP:
-        error = handle_subscribe_group(plugin, data);
-        break;
-    case NEU_REQ_UPDATE_SUBSCRIBE_GROUP:
-        error = handle_update_subscribe(plugin, data);
-        break;
-    case NEU_REQ_UNSUBSCRIBE_GROUP:
-        error = handle_unsubscribe_group(plugin, data);
-        break;
-    case NEU_REQ_UPDATE_GROUP:
-        error = handle_update_group(plugin, data);
-        break;
-    case NEU_REQ_UPDATE_NODE:
-        error = handle_update_driver(plugin, data);
-        break;
-    case NEU_REQRESP_NODE_DELETED:
-        error = handle_del_driver(plugin, data);
-        break;
+    // case NEU_REQ_SUBSCRIBE_GROUP:
+    //     error = handle_subscribe_group(plugin, data);
+    //     break;
+    // case NEU_REQ_UPDATE_SUBSCRIBE_GROUP:
+    //     error = handle_update_subscribe(plugin, data);
+    //     break;
+    // case NEU_REQ_UNSUBSCRIBE_GROUP:
+    //     error = handle_unsubscribe_group(plugin, data);
+    //     break;
+    // case NEU_REQ_UPDATE_GROUP:
+    //     error = handle_update_group(plugin, data);
+    //     break;
+    // case NEU_REQ_UPDATE_NODE:
+    //     error = handle_update_driver(plugin, data);
+    //     break;
+    // case NEU_REQRESP_NODE_DELETED:
+    //     error = handle_del_driver(plugin, data);
+    //     break;
     default:
-        error = NEU_ERR_MQTT_FAILURE;
+        // error = NEU_ERR_MQTT_FAILURE;
         break;
     }
-
+    plog_notice(plugin,"Exit request function");
     return error;
 }
 

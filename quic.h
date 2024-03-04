@@ -1,8 +1,15 @@
 #ifndef NEURON_PLUGIN_QUIC_H
 #define NEURON_PLUGIN_QUIC_H
-
-
 #include "tquic.h"
+#include "client.h"
+
+struct neu_plugin {
+  neu_plugin_common_t  common;
+  struct simple_client client;
+  char                *host;
+  char                *port;
+  bool running;
+};
 
 static neu_plugin_t *driver_open(void);
 

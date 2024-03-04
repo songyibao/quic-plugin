@@ -1,22 +1,3 @@
-/**
-* NEURON IIoT System for Industry 4.0
-* Copyright (C) 2020-2022 EMQ Technologies Co., Ltd All rights reserved.
-*
-* This program is free software; you can redistribute it and/or
-* modify it under the terms of the GNU Lesser General Public
-* License as published by the Free Software Foundation; either
-* version 3 of the License, or (at your option) any later version.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-* Lesser General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program; if not, write to the Free Software Foundation,
-* Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-**/
-
 #ifndef NEURON_PLUGIN_QUIC_HANDLE_H
 #define NEURON_PLUGIN_QUIC_HANDLE_H
 
@@ -24,7 +5,6 @@
 
 #include "neuron.h"
 #include "plugin.h"
-#include "client.h"
 //void handle_write_req(neu_mqtt_qos_e qos, const char *topic,
 //                     const uint8_t *payload, uint32_t len, void *data);
 //

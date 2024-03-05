@@ -38,133 +38,33 @@ const neu_plugin_module_t neu_plugin_module = {
     .display         = true,
     .single          = false,
 };
-
-static neu_plugin_t *driver_open(void)
+neu_plugin_t *local_plugin;
+// neu_plugin_common_t *local_plugin_common;
+int                  free_client(simple_client_t client)
 {
-    neu_plugin_t *plugin = calloc(1, sizeof(neu_plugin_t));
-
-    neu_plugin_common_init(&plugin->common);
-
-    return plugin;
-}
-
-static int driver_close(neu_plugin_t *plugin)
-{
-    free(plugin);
-
-    return 0;
-}
-
-static int driver_init(neu_plugin_t *plugin, bool load)
-{
-    (void) load;
-    plugin->running = false;
-    // plugin_cache_init(plugin);
-    plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
-    const char *name          = neu_plugin_module.module_name;
-    plog_info(plugin, "initialize plugin: %s", name);
-
-    return 0;
-}
-
-static int driver_uninit(neu_plugin_t *plugin)
-{
-
-    free(plugin);
-    plog_notice(plugin, "quic uninit");
-    return 0;
-}
-
-static int driver_start(neu_plugin_t *plugin)
-{
-    quic_set_logger(debug_log, NULL, QUIC_LOG_LEVEL_INFO);
-
-    // Create client.
-    struct simple_client client;
-    client.quic_endpoint = NULL;
-    client.ssl_ctx       = NULL;
-    client.conn          = NULL;
-    client.loop          = NULL;
-    client.config = NULL;
-
-    plugin->client = client;
-    plog_notice(plugin, "bofore create socket, host:%s, port:%s", plugin->host,
-                plugin->port);
-    if (create_socket(plugin->host, plugin->port, &(plugin->client).peer,
-                      &plugin->client) != 0) {
-        // ret = -1;
-        goto error;
-        plog_notice(plugin, "node: socket created failed");
+    if (client.peer != NULL) {
+        freeaddrinfo(client.peer);
     }
-
-    return 0;
-error:
-
-    return -1;
-}
-
-static int driver_stop(neu_plugin_t *plugin)
-{
-
-    plog_notice(plugin, "Start stop function");
-    // if (plugin->client.ssl_ctx != NULL) {
-    //     SSL_CTX_free(plugin->client.ssl_ctx);
-    // }
-    // if (plugin->client.sock > 0) {
-    //     close(plugin->client.sock);
-    // }
-    // if (plugin->client.quic_endpoint != NULL) {
-    //     quic_endpoint_free(plugin->client.quic_endpoint);
-    // }
-    // if (plugin->client.loop != NULL) {
-    //     ev_loop_destroy(plugin->client.loop);
-    // }
-    // if (plugin->config != NULL) {
-    //     quic_config_free(plugin->config);
-    // }
-    plog_notice(plugin, "Exit stop function");
-
+    if (client.ssl_ctx != NULL) {
+        SSL_CTX_free(client.ssl_ctx);
+    }
+    if (client.sock > 0) {
+        close(client.sock);
+    }
+    if (client.quic_endpoint != NULL) {
+        quic_endpoint_close(client.quic_endpoint, true);
+        quic_endpoint_free(client.quic_endpoint);
+    }
+    if (client.loop != NULL) {
+        ev_loop_destroy(client.loop);
+    }
+    if (client.config != NULL) {
+        quic_config_free(client.config);
+    }
     return 0;
 }
-
-static int parse_config(neu_plugin_t *plugin, const char *setting,
-                        char **host_p, uint16_t *port_p)
-{
-    char           *err_param = NULL;
-    neu_json_elem_t host      = { .name = "host", .t = NEU_JSON_STR };
-    neu_json_elem_t port      = { .name = "port", .t = NEU_JSON_INT };
-
-    if (0 != neu_parse_param(setting, &err_param, 2, &host, &port)) {
-        plog_error(plugin, "parsing setting fail, key: `%s`", err_param);
-        goto error;
-    }
-
-    // host, required
-    if (0 == strlen(host.v.val_str)) {
-        plog_error(plugin, "setting invalid host: `%s`", host.v.val_str);
-        goto error;
-    }
-
-    // port, required
-    if (0 == port.v.val_int || port.v.val_int > 65535) {
-        plog_error(plugin, "setting invalid port: %" PRIi64, port.v.val_int);
-        goto error;
-    }
-
-    *host_p = host.v.val_str;
-    *port_p = port.v.val_int;
-
-    plog_notice(plugin, "config host:%s port:%" PRIu16, *host_p, *port_p);
-
-    return 0;
-
-error:
-    free(err_param);
-    free(host.v.val_str);
-    return -1;
-}
-int mqtt_config_parse(neu_plugin_t *plugin, const char *setting, char *chost,
-                      char *cport)
+int config_parse(neu_plugin_t *plugin, const char *setting, char *chost,
+                 char *cport)
 {
     int   ret       = 0;
     char *err_param = NULL;
@@ -212,11 +112,47 @@ error:
     // free(port.v.val_int);
     return -1;
 }
+static neu_plugin_t *driver_open(void)
+{
+    neu_plugin_t *plugin = calloc(1, sizeof(neu_plugin_t));
+
+    neu_plugin_common_init(&plugin->common);
+    return plugin;
+}
+
+static int driver_close(neu_plugin_t *plugin)
+{
+    free(plugin);
+
+    return 0;
+}
+
+static int driver_init(neu_plugin_t *plugin, bool load)
+{
+    local_plugin = plugin;
+    (void) load;
+    plugin->running = false;
+    // plugin_cache_init(plugin);
+    // plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
+    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+    const char *name          = neu_plugin_module.module_name;
+    plog_notice(
+        plugin,
+        "============================================================"
+        "\ninitialize "
+        "plugin============================================================\n");
+
+    return 0;
+}
 static int driver_config(neu_plugin_t *plugin, const char *setting)
 {
+    plog_notice(
+        plugin,
+        "============================================================\nconfig "
+        "plugin============================================================\n");
     int rv = 0;
 
-    if (0 != mqtt_config_parse(plugin, setting, plugin->host, plugin->port)) {
+    if (0 != config_parse(plugin, setting, plugin->host, plugin->port)) {
         rv = NEU_ERR_NODE_SETTING_INVALID;
         goto error;
     }
@@ -232,15 +168,57 @@ static int driver_config(neu_plugin_t *plugin, const char *setting)
 
     return rv;
 
-error:
-    plog_error(plugin, "config failure");
+    error:
+        plog_error(plugin, "config failure");
     return rv;
+}
+static int driver_start(neu_plugin_t *plugin)
+{
+    plog_notice(
+        plugin,
+        "============================================================\nstart "
+        "plugin============================================================\n");
+    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+    new_client(plugin,example_timeout_callback,client_on_conn_established);
+}
+
+static int driver_stop(neu_plugin_t *plugin)
+{
+    plog_notice(
+        plugin,
+        "============================================================\nstop "
+        "plugin============================================================\n");
+    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+    free_client(plugin->client);
+
+    return 0;
+}
+
+static int driver_uninit(neu_plugin_t *plugin)
+{
+    plog_notice(
+        plugin,
+        "============================================================\nuninit "
+        "plugin============================================================\n");
+    free_client(plugin->client);
+    // free(&plugin->client);
+    free(plugin->host);
+    free(plugin->port);
+    free(plugin);
+
+    plog_notice(plugin, "uninitialize plugin `%s` success",
+                neu_plugin_module.module_name);
+    return NEU_ERR_SUCCESS;
 }
 
 static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
                           void *data)
 {
-    plog_notice(plugin,"Start request function");
+    plog_notice(
+        plugin,
+        "============================================================\nrequest "
+        "plugin============================================================\n");
+    plog_notice(plugin, "Start request function");
     neu_err_code_e error = NEU_ERR_SUCCESS;
 
     // update cached messages number per seconds
@@ -251,7 +229,6 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
     //            neu_mqtt_client_get_cached_msgs_num(plugin->client), NULL);
     //        plugin->cache_metric_update_ts = global_timestamp;
     //    }
-
     switch (head->type) {
     // case NEU_RESP_ERROR:
     //     //        error = handle_write_response(plugin, head->ctx, data);
@@ -288,7 +265,7 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
         // error = NEU_ERR_MQTT_FAILURE;
         break;
     }
-    plog_notice(plugin,"Exit request function");
+    plog_notice(plugin, "Exit request function");
     return error;
 }
 

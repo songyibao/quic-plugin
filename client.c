@@ -1,6 +1,39 @@
 
 #include "client.h"
-#include "tquic.h"
+#include "quic.h"
+
+
+
+void client_on_stream_writable(void *tctx, struct quic_conn_t *conn,uint64_t stream_id)
+{
+}
+void client_on_stream_closed(void *tctx, struct quic_conn_t *conn,uint64_t stream_id)
+{
+
+}
+void client_on_conn_closed(void *tctx, struct quic_conn_t *conn)
+{
+    struct simple_client *client = tctx;
+    ev_break(client->loop, EVBREAK_ALL);
+}
+void client_on_conn_established(void *tctx, struct quic_conn_t *conn)
+{
+    const char *data = "GET /\r\n";
+    quic_stream_write(conn, 0, (uint8_t *)data, strlen(data), true);
+}
+const struct quic_transport_methods_t quic_transport_methods = {
+    .on_conn_created     = client_on_conn_created,
+    .on_conn_established = client_on_conn_established,
+    .on_conn_closed      = client_on_conn_closed,
+    .on_stream_created   = client_on_stream_created,
+    .on_stream_readable  = client_on_stream_readable,
+    .on_stream_writable  = client_on_stream_writable,
+    .on_stream_closed    = client_on_stream_closed,
+};
+
+const struct quic_packet_send_methods_t quic_packet_send_methods = {
+    .on_packets_send = client_on_packets_send,
+};
 void client_on_conn_created(void *tctx, struct quic_conn_t *conn) {
     struct simple_client *client = tctx;
     client->conn = conn;
@@ -9,11 +42,6 @@ void client_on_conn_created(void *tctx, struct quic_conn_t *conn) {
 
 
 // Modify client_on_conn_established function to call send_json_data
-
-void client_on_conn_closed(void *tctx, struct quic_conn_t *conn) {
-    struct simple_client *client = tctx;
-    ev_break(client->loop, EVBREAK_ALL);
-}
 
 void client_on_stream_created(void *tctx, struct quic_conn_t *conn,
                               uint64_t stream_id) {}
@@ -28,17 +56,18 @@ void client_on_stream_readable(void *tctx, struct quic_conn_t *conn,
         return;
     }
 
-    printf("%.*s", (int)r, buf);
-
+    (local_plugin->common).link_state = NEU_NODE_LINK_STATE_CONNECTED;
+    nlog_notice("rec msg from server:%.*s", (int)r, buf);
     if (fin) {
+        nlog_notice("server says fin:true");
         const char *reason = "ok";
         quic_conn_close(conn, true, 0, (const uint8_t *)reason, strlen(reason));
     }
+
 }
 
 
-void client_on_stream_closed(void *tctx, struct quic_conn_t *conn,
-                             uint64_t stream_id) {}
+
 
 int client_on_packets_send(void *psctx, struct quic_packet_out_spec_t *pkts,
                            unsigned int count) {
@@ -153,11 +182,14 @@ void read_callback(EV_P_ ev_io *w, int revents) {
     process_connections(client);
 }
 
-void timeout_callback(EV_P_ ev_timer *w, int revents) {
+void example_timeout_callback(EV_P_ ev_timer *w, int revents) {
     struct simple_client *client = w->data;
     quic_endpoint_on_timeout(client->quic_endpoint);
     process_connections(client);
+    nlog_notice("timeout_callback");
 }
+
+
 
 void debug_log(const unsigned char *line, void *argp) {
     fprintf(stderr, "%s\n", line);
@@ -192,4 +224,112 @@ int create_socket(const char *host, const char *port,
     client->sock = sock;
 
     return 0;
+}
+
+int new_client(neu_plugin_t *plugin, TimeoutCallback timeout_callback, OnConnEstablishedCallback on_conn_established_callback)
+{
+    const struct quic_transport_methods_t local_quic_transport_methods = {
+        .on_conn_created     = client_on_conn_created,
+        .on_conn_established = on_conn_established_callback,
+        .on_conn_closed      = client_on_conn_closed,
+        .on_stream_created   = client_on_stream_created,
+        .on_stream_readable  = client_on_stream_readable,
+        .on_stream_writable  = client_on_stream_writable,
+        .on_stream_closed    = client_on_stream_closed,
+    };
+    // Set logger.
+    quic_set_logger(debug_log, NULL, QUIC_LOG_LEVEL_OFF);
+
+    // Create client.
+    struct simple_client client;
+    client.quic_endpoint  = NULL;
+    client.ssl_ctx        = NULL;
+    client.conn           = NULL;
+    client.loop           = NULL;
+    quic_config_t *config = NULL;
+    int            ret    = 0;
+
+    // Create socket.
+    const char      *host = plugin->host;
+    const char      *port = plugin->port;
+    struct addrinfo *peer = NULL;
+    if (create_socket(host, port, &peer, &client) != 0) {
+        ret = -1;
+        goto EXIT;
+    }
+
+    // Create quic config.
+    config = quic_config_new();
+    if (config == NULL) {
+        fprintf(stderr, "failed to create config\n");
+        ret = -1;
+        goto EXIT;
+    }
+    quic_config_set_max_idle_timeout(config, 5000);
+    quic_config_set_recv_udp_payload_size(config, MAX_DATAGRAM_SIZE);
+
+    // Create and set tls config.
+    if (client_load_ssl_ctx(&client) != 0) {
+        ret = -1;
+        goto EXIT;
+    }
+    quic_config_set_tls_config(config, client.ssl_ctx);
+
+    // Create quic endpoint
+    client.quic_endpoint =
+        quic_endpoint_new(config, false, &local_quic_transport_methods, &client,
+                          &quic_packet_send_methods, &client);
+    if (client.quic_endpoint == NULL) {
+        fprintf(stderr, "failed to create quic endpoint\n");
+        ret = -1;
+        goto EXIT;
+    }
+
+    // Init event loop.
+    client.loop = ev_default_loop(0);
+    ev_init(&client.timer, timeout_callback);
+    client.timer.data = &client;
+
+    // Connect to server.
+    ret = quic_endpoint_connect(
+        client.quic_endpoint, (struct sockaddr *) &client.local_addr,
+        client.local_addr_len, peer->ai_addr, peer->ai_addrlen,
+        NULL /* client_name*/, NULL /* session */, 0 /* session_len */,
+        NULL /* token */, 0 /* token_len */, NULL /*index*/);
+
+    if (ret < 0) {
+        fprintf(stderr, "failed to connect to client: %d\n", ret);
+        ret = -1;
+        goto EXIT;
+    }
+    process_connections(&client);
+
+    // Start event loop.
+    ev_io watcher;
+    ev_io_init(&watcher, read_callback, client.sock, EV_READ);
+    ev_io_start(client.loop, &watcher);
+    watcher.data = &client;
+    ev_loop(client.loop, 0);
+
+EXIT:
+    if (peer != NULL) {
+        freeaddrinfo(peer);
+    }
+    if (client.ssl_ctx != NULL) {
+        SSL_CTX_free(client.ssl_ctx);
+    }
+    if (client.sock > 0) {
+        close(client.sock);
+    }
+    if (client.quic_endpoint != NULL) {
+        quic_endpoint_free(client.quic_endpoint);
+    }
+    if (client.loop != NULL) {
+        ev_loop_destroy(client.loop);
+    }
+    if (config != NULL) {
+        quic_config_free(config);
+    }
+
+    return ret;
 }

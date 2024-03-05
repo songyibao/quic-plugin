@@ -1,6 +1,6 @@
 #ifndef NEURON_PLUGIN_QUIC_H
 #define NEURON_PLUGIN_QUIC_H
-#include "tquic.h"
+
 #include "client.h"
 
 struct neu_plugin {
@@ -11,6 +11,7 @@ struct neu_plugin {
   bool running;
 };
 
+extern neu_plugin_t *local_plugin;
 static neu_plugin_t *driver_open(void);
 
 static int driver_close(neu_plugin_t *plugin);

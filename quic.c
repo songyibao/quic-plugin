@@ -131,10 +131,6 @@ static int driver_init(neu_plugin_t *plugin, bool load)
 {
     local_plugin = plugin;
     (void) load;
-    plugin->running = false;
-    // plugin_cache_init(plugin);
-    // plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
-    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
     const char *name          = neu_plugin_module.module_name;
     plog_notice(
         plugin,
@@ -178,7 +174,10 @@ static int driver_start(neu_plugin_t *plugin)
         plugin,
         "============================================================\nstart "
         "plugin============================================================\n");
-    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+    // plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+
+    // start plugin
+    plugin->started = true;
     new_client(plugin,example_timeout_callback,client_on_conn_established);
 }
 
@@ -188,8 +187,9 @@ static int driver_stop(neu_plugin_t *plugin)
         plugin,
         "============================================================\nstop "
         "plugin============================================================\n");
-    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-    free_client(plugin->client);
+    // stop plugin
+    plugin->started = false;
+    // plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
 
     return 0;
 }
@@ -214,12 +214,17 @@ static int driver_uninit(neu_plugin_t *plugin)
 static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
                           void *data)
 {
+    neu_err_code_e error = NEU_ERR_SUCCESS;
+    if(plugin->started == false) {
+        error = NEU_ERR_NODE_IS_STOPED;
+        goto exit;
+    }
     plog_notice(
         plugin,
         "============================================================\nrequest "
         "plugin============================================================\n");
     plog_notice(plugin, "Start request function");
-    neu_err_code_e error = NEU_ERR_SUCCESS;
+
 
     // update cached messages number per seconds
     //    if (NULL != plugin->client &&
@@ -237,6 +242,10 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
     //     error = handle_read_response(plugin, head->ctx, data);
     //     break;
     case NEU_REQRESP_TRANS_DATA: {
+        if(plugin->common.link_state == false) {
+            error = NEU_ERR_NODE_NOT_READY;
+            goto exit;
+        }
         // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 1, NULL);
         // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 1, NULL);
         // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 1, NULL);
@@ -266,6 +275,9 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
         break;
     }
     plog_notice(plugin, "Exit request function");
+    return error;
+
+exit:
     return error;
 }
 

@@ -55,13 +55,14 @@ void client_on_stream_readable(void *tctx, struct quic_conn_t *conn,
         fprintf(stderr, "stream[%ld] read error\n", stream_id);
         return;
     }
-
-    (local_plugin->common).link_state = NEU_NODE_LINK_STATE_CONNECTED;
+    local_plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
     nlog_notice("rec msg from server:%.*s", (int)r, buf);
     if (fin) {
         nlog_notice("server says fin:true");
         const char *reason = "ok";
         quic_conn_close(conn, true, 0, (const uint8_t *)reason, strlen(reason));
+        //by default, node is connected after connection try
+
     }
 
 }
@@ -186,6 +187,8 @@ void example_timeout_callback(EV_P_ ev_timer *w, int revents) {
     struct simple_client *client = w->data;
     quic_endpoint_on_timeout(client->quic_endpoint);
     process_connections(client);
+    // by default, node is disconnected when timeout
+    local_plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
     nlog_notice("timeout_callback");
 }
 

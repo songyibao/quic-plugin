@@ -4,11 +4,11 @@
 #include "client.h"
 
 struct neu_plugin {
-  neu_plugin_common_t  common;
-  struct simple_client client;
-  char                *host;
-  char                *port;
-  bool running;
+    neu_plugin_common_t  common;
+    struct simple_client client;
+    char                *host;
+    char                *port;
+    bool                 started;
 };
 
 extern neu_plugin_t *local_plugin;
@@ -27,6 +27,5 @@ static int driver_validate_tag(neu_plugin_t *plugin, neu_datatag_t *tag);
 static int driver_group_timer(neu_plugin_t *plugin, neu_plugin_group_t *group);
 static int driver_write(neu_plugin_t *plugin, void *req, neu_datatag_t *tag,
                         neu_value_u value);
-
 
 #endif

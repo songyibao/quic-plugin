@@ -3,7 +3,7 @@
 //
 
 #include <stdlib.h>
-
+#include <pthread.h>
 #include "client.h"
 #include "neuron.h"
 #include "quic.h"
@@ -39,7 +39,6 @@ const neu_plugin_module_t neu_plugin_module = {
     .single          = false,
 };
 neu_plugin_t *local_plugin;
-// neu_plugin_common_t *local_plugin_common;
 int                  free_client(simple_client_t client)
 {
     if (client.peer != NULL) {
@@ -114,6 +113,7 @@ error:
 }
 static neu_plugin_t *driver_open(void)
 {
+
     neu_plugin_t *plugin = calloc(1, sizeof(neu_plugin_t));
 
     neu_plugin_common_init(&plugin->common);
@@ -131,7 +131,6 @@ static int driver_init(neu_plugin_t *plugin, bool load)
 {
     local_plugin = plugin;
     (void) load;
-    const char *name          = neu_plugin_module.module_name;
     plog_notice(
         plugin,
         "============================================================"
@@ -142,6 +141,7 @@ static int driver_init(neu_plugin_t *plugin, bool load)
 }
 static int driver_config(neu_plugin_t *plugin, const char *setting)
 {
+    local_plugin = plugin;
     plog_notice(
         plugin,
         "============================================================\nconfig "
@@ -168,21 +168,27 @@ static int driver_config(neu_plugin_t *plugin, const char *setting)
         plog_error(plugin, "config failure");
     return rv;
 }
+
 static int driver_start(neu_plugin_t *plugin)
 {
+    if (plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED){
+        return NEU_ERR_NODE_NOT_READY;
+    }
     plog_notice(
         plugin,
         "============================================================\nstart "
         "plugin============================================================\n");
-    // plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-
+    local_plugin = plugin;
+    //timer init to 0
+    plugin->timer = 0;
     // start plugin
     plugin->started = true;
-    new_client(plugin,example_timeout_callback,client_on_conn_established);
+    return 0;
 }
 
 static int driver_stop(neu_plugin_t *plugin)
 {
+    local_plugin = NULL;
     plog_notice(
         plugin,
         "============================================================\nstop "
@@ -196,6 +202,7 @@ static int driver_stop(neu_plugin_t *plugin)
 
 static int driver_uninit(neu_plugin_t *plugin)
 {
+    local_plugin = NULL;
     plog_notice(
         plugin,
         "============================================================\nuninit "
@@ -214,8 +221,19 @@ static int driver_uninit(neu_plugin_t *plugin)
 static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
                           void *data)
 {
+    local_plugin = plugin;
+
+    // check link status once every 3 seconds
+    plugin->timer++;
+    if(plugin->timer == 3){
+        plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+        new_client(plugin,example_timeout_callback,client_on_conn_established);
+        plugin->timer = 0;
+    }
+
+
     neu_err_code_e error = NEU_ERR_SUCCESS;
-    if(plugin->started == false) {
+    if(plugin->started == false || plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED) {
         error = NEU_ERR_NODE_IS_STOPED;
         goto exit;
     }

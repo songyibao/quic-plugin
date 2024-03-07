@@ -187,8 +187,6 @@ void example_timeout_callback(EV_P_ ev_timer *w, int revents) {
     struct simple_client *client = w->data;
     quic_endpoint_on_timeout(client->quic_endpoint);
     process_connections(client);
-    // by default, node is disconnected when timeout
-    local_plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
     nlog_notice("timeout_callback");
 }
 
@@ -313,6 +311,7 @@ int new_client(neu_plugin_t *plugin, TimeoutCallback timeout_callback, OnConnEst
     ev_io_start(client.loop, &watcher);
     watcher.data = &client;
     ev_loop(client.loop, 0);
+    goto  EXIT;
 
 EXIT:
     if (peer != NULL) {
@@ -333,6 +332,6 @@ EXIT:
     if (config != NULL) {
         quic_config_free(config);
     }
-
+//    free(&client);
     return ret;
 }

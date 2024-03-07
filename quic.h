@@ -2,6 +2,7 @@
 #define NEURON_PLUGIN_QUIC_H
 
 #include "client.h"
+#include "ev.h"
 
 struct neu_plugin {
     neu_plugin_common_t  common;
@@ -9,8 +10,8 @@ struct neu_plugin {
     char                *host;
     char                *port;
     bool                 started;
+    char timer;
 };
-
 extern neu_plugin_t *local_plugin;
 static neu_plugin_t *driver_open(void);
 

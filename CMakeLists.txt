@@ -1,5 +1,3 @@
-
-
 set(LIBRARY_OUTPUT_PATH "./")
 file(COPY /home/songyibao/Downloads/neuron-main/plugins/quic/quic.json DESTINATION /home/songyibao/Downloads/neuron-main/build/plugins/schema)
 set(src
@@ -9,6 +7,7 @@ set(src
         quic_handle.c)
 
 add_library(plugin-quic SHARED ${src})
+
 
 target_include_directories(plugin-quic PRIVATE
 #        ${CMAKE_SOURCE_DIR}/include/neuron
@@ -21,4 +20,4 @@ target_include_directories(plugin-quic PRIVATE
 target_link_libraries(plugin-quic PRIVATE /home/songyibao/Downloads/neuron-main/plugins/quic/deps/tquic/target/release/libtquic.a)
 
 target_link_libraries(plugin-quic PRIVATE  ev)
-target_link_libraries(plugin-quic PRIVATE /usr/local/lib/neuron/libneuron-base.so /usr/local/lib/neuron/libzlog.so.1.2)
+target_link_libraries(plugin-quic PRIVATE /usr/local/lib/neuron/libneuron-base.so)

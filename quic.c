@@ -136,7 +136,9 @@ static int driver_init(neu_plugin_t *plugin, bool load)
         "============================================================"
         "\ninitialize "
         "plugin============================================================\n");
-
+    NEU_PLUGIN_REGISTER_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 5000);
+    NEU_PLUGIN_REGISTER_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 30000);
+    NEU_PLUGIN_REGISTER_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 60000);
     return 0;
 }
 static int driver_config(neu_plugin_t *plugin, const char *setting)
@@ -171,9 +173,9 @@ static int driver_config(neu_plugin_t *plugin, const char *setting)
 
 static int driver_start(neu_plugin_t *plugin)
 {
-    if (plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED){
-        return NEU_ERR_NODE_NOT_READY;
-    }
+//    if (plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED){
+//        return NEU_ERR_NODE_NOT_READY;
+//    }
     plog_notice(
         plugin,
         "============================================================\nstart "
@@ -264,9 +266,9 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
             error = NEU_ERR_NODE_NOT_READY;
             goto exit;
         }
-        // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 1, NULL);
-        // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 1, NULL);
-        // NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 1, NULL);
+        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 1, NULL);
+        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 1, NULL);
+        NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 1, NULL);
         error = handle_trans_data(plugin, data);
         break;
     }

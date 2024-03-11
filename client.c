@@ -187,7 +187,6 @@ void example_timeout_callback(EV_P_ ev_timer *w, int revents) {
     struct simple_client *client = w->data;
     quic_endpoint_on_timeout(client->quic_endpoint);
     process_connections(client);
-    nlog_notice("timeout_callback");
 }
 
 

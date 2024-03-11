@@ -10,6 +10,7 @@ struct neu_plugin {
     char                *host;
     char                *port;
     bool                 started;
+    uint sent_count;
     char timer;
 };
 extern neu_plugin_t *local_plugin;

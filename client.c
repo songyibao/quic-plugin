@@ -1,7 +1,7 @@
 
 #include "client.h"
 #include "quic.h"
-
+#include "zlib.h"
 
 
 void client_on_stream_writable(void *tctx, struct quic_conn_t *conn,uint64_t stream_id)
@@ -19,7 +19,11 @@ void client_on_conn_closed(void *tctx, struct quic_conn_t *conn)
 void client_on_conn_established(void *tctx, struct quic_conn_t *conn)
 {
     const char *data = "GET /\r\n";
-    quic_stream_write(conn, 0, (uint8_t *)data, strlen(data), true);
+    unsigned char * compressed;
+    size_t compressed_size=0;
+    assert(compress_string(data,&compressed,&compressed_size) == Z_OK);
+
+    quic_stream_write(conn, 0, (uint8_t *)compressed, compressed_size, true);
 }
 const struct quic_transport_methods_t quic_transport_methods = {
     .on_conn_created     = client_on_conn_created,
@@ -225,7 +229,27 @@ int create_socket(const char *host, const char *port,
 
     return 0;
 }
+// 压缩 JSON 字符串
+int compress_string(const char* str, unsigned char** compressed, size_t* compressed_size) {
+    uLong str_length = strlen(str) + 1; // 包括终止符
+    uLong comp_length = compressBound(str_length); // 计算压缩后的最大长度
 
+
+    // 分配压缩缓冲区
+    *compressed = (unsigned char*)malloc(comp_length + sizeof(uLong));
+    if (*compressed == NULL) {
+        return -1;
+    }
+    memcpy(*compressed,&str_length,sizeof(uLong));
+    // 压缩
+    if (compress(*compressed+sizeof(uLong), &comp_length, (const unsigned char*)str, str_length) != Z_OK) {
+        free(*compressed);
+        return -1;
+    }
+
+    *compressed_size = comp_length+sizeof(uLong);
+    return 0;
+}
 int new_client(neu_plugin_t *plugin, TimeoutCallback timeout_callback, OnConnEstablishedCallback on_conn_established_callback)
 {
     const struct quic_transport_methods_t local_quic_transport_methods = {
@@ -286,7 +310,7 @@ int new_client(neu_plugin_t *plugin, TimeoutCallback timeout_callback, OnConnEst
     }
 
     // Init event loop.
-    client.loop = ev_default_loop(0);
+    client.loop = ev_loop_new(0);
     ev_init(&client.timer, timeout_callback);
     client.timer.data = &client;
 
@@ -310,6 +334,7 @@ int new_client(neu_plugin_t *plugin, TimeoutCallback timeout_callback, OnConnEst
     ev_io_start(client.loop, &watcher);
     watcher.data = &client;
     ev_loop(client.loop, 0);
+//    ev_loop_destroy(client.loop);
     goto  EXIT;
 
 EXIT:

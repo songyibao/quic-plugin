@@ -3,15 +3,17 @@
 
 #include "client.h"
 #include "ev.h"
+#include <sqlite3.h>
 
 struct neu_plugin {
     neu_plugin_common_t  common;
-    struct simple_client client;
     char                *host;
     char                *port;
     bool                 started;
     uint sent_count;
-    char timer;
+    unsigned char timer;
+    sqlite3 *db;
+    char *table_name;
 };
 extern neu_plugin_t *local_plugin;
 static neu_plugin_t *driver_open(void);

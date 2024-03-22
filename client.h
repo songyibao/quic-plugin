@@ -41,6 +41,7 @@ typedef void (*TimeoutCallback)(EV_P_ ev_timer *w, int revents);
 typedef void (*OnConnEstablishedCallback)(void *tctx, struct quic_conn_t *conn);
 // int set_quic_client_config(neu_plugin_t *plugin);
 // int create_quic_endpoint(neu_plugin_t *plugin,const quic_transport_methods_t local_quic_transport_methods);
+int compress_string(const char* str, unsigned char** compressed, size_t* compressed_size);
 void client_on_stream_writable(void *tctx, struct quic_conn_t *conn,uint64_t stream_id);
 void client_on_stream_closed(void *tctx, struct quic_conn_t *conn,uint64_t stream_id);
 void client_on_conn_closed(void *tctx, struct quic_conn_t *conn);

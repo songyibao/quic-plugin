@@ -9,6 +9,9 @@
 #include "quic.h"
 #include "quic_config.h"
 #include "quic_handle.h"
+#include "zlib.h"
+#include "mysqlite.h"
+
 
 static const neu_plugin_intf_funs_t plugin_intf_funs = {
     .open    = driver_open,
@@ -39,7 +42,12 @@ const neu_plugin_module_t neu_plugin_module = {
     .single          = false,
 };
 neu_plugin_t *local_plugin;
-int                  free_client(simple_client_t client)
+
+void* thread_function(void* arg) {
+    new_client(local_plugin,example_timeout_callback,client_on_conn_established);
+    return NULL;
+}
+int free_client(simple_client_t client)
 {
     if (client.peer != NULL) {
         freeaddrinfo(client.peer);
@@ -176,15 +184,25 @@ static int driver_start(neu_plugin_t *plugin)
 //    if (plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED){
 //        return NEU_ERR_NODE_NOT_READY;
 //    }
+
     plog_notice(
         plugin,
         "============================================================\nstart "
         "plugin============================================================\n");
     local_plugin = plugin;
+
+    plugin->table_name = "json_data";
+    init_database(&(plugin->db),"persistence/quic.db");
+    if(!table_exists(plugin->db,plugin->table_name)){
+        create_table(plugin->db,plugin->table_name);
+    }
+
     //timer init to 0
     plugin->timer = 0;
     // start plugin
     plugin->started = true;
+//    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+
     return 0;
 }
 
@@ -198,7 +216,8 @@ static int driver_stop(neu_plugin_t *plugin)
     // stop plugin
     plugin->started = false;
     // plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-
+//    free_client(plugin->client);
+    close_database(plugin->db);
     return 0;
 }
 
@@ -209,7 +228,7 @@ static int driver_uninit(neu_plugin_t *plugin)
         plugin,
         "============================================================\nuninit "
         "plugin============================================================\n");
-    free_client(plugin->client);
+
     // free(&plugin->client);
     free(plugin->host);
     free(plugin->port);
@@ -223,75 +242,59 @@ static int driver_uninit(neu_plugin_t *plugin)
 static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
                           void *data)
 {
-    local_plugin = plugin;
-
-    // check link status once every 3 seconds
-    plugin->timer++;
-    if(plugin->timer == 3){
-        plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-        new_client(plugin,example_timeout_callback,client_on_conn_established);
-        plugin->timer = 0;
-    }
-
-
-    neu_err_code_e error = NEU_ERR_SUCCESS;
-    if(plugin->started == false || plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED) {
-        error = NEU_ERR_NODE_IS_STOPED;
-        goto exit;
-    }
     plog_notice(
         plugin,
         "============================================================\nrequest "
         "plugin============================================================\n");
-    plog_notice(plugin, "Start request function");
+//    fprintf(stdout,"Start request function");
+    local_plugin = plugin;
+
+    // check link status once every 3 seconds
+    plugin->timer++;
+//    plog_notice(plugin,"计时器:%d",plugin->timer);
+    if(plugin->timer % 3 == 0){
+        plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+        pthread_t thread_id;
+        if (pthread_create(&thread_id, NULL, &thread_function, NULL) != 0) {
+            printf("Error creating thread.\n");
+        }
+    }
+    if(plugin->timer % 10 == 0 && plugin->common.link_state
+            ==NEU_NODE_LINK_STATE_CONNECTED && plugin->started == true){
+        plog_notice(plugin,"10 秒传输一次数据");
+        handle_trans_data(plugin,data);
+    }
+
+    neu_err_code_e error = NEU_ERR_SUCCESS;
+//    if(plugin->started == false || plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED) {
+//        error = NEU_ERR_NODE_IS_STOPED;
+//        goto exit;
+//    }
+    if(plugin->started == false) {
+        error = NEU_ERR_NODE_IS_STOPED;
+        goto exit;
+    }
 
 
-    // update cached messages number per seconds
-    //    if (NULL != plugin->client &&
-    //        (global_timestamp - plugin->cache_metric_update_ts) >= 1000) {
-    //        NEU_PLUGIN_UPDATE_METRIC(
-    //            plugin, NEU_METRIC_CACHED_MSGS_NUM,
-    //            neu_mqtt_client_get_cached_msgs_num(plugin->client), NULL);
-    //        plugin->cache_metric_update_ts = global_timestamp;
-    //    }
     switch (head->type) {
-    // case NEU_RESP_ERROR:
-    //     //        error = handle_write_response(plugin, head->ctx, data);
-    //     break;
-    // case NEU_RESP_READ_GROUP:
-    //     error = handle_read_response(plugin, head->ctx, data);
-    //     break;
+
     case NEU_REQRESP_TRANS_DATA: {
-        if(plugin->common.link_state == false) {
+//        if(plugin->common.link_state == false) {
+//            error = NEU_ERR_NODE_NOT_READY;
+//            goto exit;
+//        }
+        if(plugin->started == false){
             error = NEU_ERR_NODE_NOT_READY;
             goto exit;
         }
         NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 1, NULL);
         NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 1, NULL);
         NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 1, NULL);
-        error = handle_trans_data(plugin, data);
+        error = handle_insert_data(plugin,data);
+//        error = handle_trans_data(plugin, data);
         break;
     }
-    // case NEU_REQ_SUBSCRIBE_GROUP:
-    //     error = handle_subscribe_group(plugin, data);
-    //     break;
-    // case NEU_REQ_UPDATE_SUBSCRIBE_GROUP:
-    //     error = handle_update_subscribe(plugin, data);
-    //     break;
-    // case NEU_REQ_UNSUBSCRIBE_GROUP:
-    //     error = handle_unsubscribe_group(plugin, data);
-    //     break;
-    // case NEU_REQ_UPDATE_GROUP:
-    //     error = handle_update_group(plugin, data);
-    //     break;
-    // case NEU_REQ_UPDATE_NODE:
-    //     error = handle_update_driver(plugin, data);
-    //     break;
-    // case NEU_REQRESP_NODE_DELETED:
-    //     error = handle_del_driver(plugin, data);
-    //     break;
     default:
-        // error = NEU_ERR_MQTT_FAILURE;
         break;
     }
     plog_notice(plugin, "Exit request function");

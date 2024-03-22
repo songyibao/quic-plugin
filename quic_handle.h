@@ -7,7 +7,8 @@
 
 int handle_read_response(neu_plugin_t *plugin, neu_json_mqtt_t *mqtt_json,
                         neu_resp_read_group_t *data);
-
+int handle_insert_data(neu_plugin_t *            plugin,
+                      neu_reqresp_trans_data_t *trans_data);
 int handle_trans_data(neu_plugin_t *            plugin,
                      neu_reqresp_trans_data_t *trans_data);
 

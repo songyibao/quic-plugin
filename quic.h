@@ -10,10 +10,10 @@ struct neu_plugin {
     char                *host;
     char                *port;
     bool                 started;
-    uint sent_count;
     unsigned char timer;
     sqlite3 *db;
     char *table_name;
+    uint16_t msg_buffer_size;
 };
 extern neu_plugin_t *local_plugin;
 static neu_plugin_t *driver_open(void);

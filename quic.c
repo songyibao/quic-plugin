@@ -47,45 +47,22 @@ void* thread_function(void* arg) {
     new_client(local_plugin,example_timeout_callback,client_on_conn_established);
     return NULL;
 }
-int free_client(simple_client_t client)
-{
-    if (client.peer != NULL) {
-        freeaddrinfo(client.peer);
-    }
-    if (client.ssl_ctx != NULL) {
-        SSL_CTX_free(client.ssl_ctx);
-    }
-    if (client.sock > 0) {
-        close(client.sock);
-    }
-    if (client.quic_endpoint != NULL) {
-        quic_endpoint_close(client.quic_endpoint, true);
-        quic_endpoint_free(client.quic_endpoint);
-    }
-    if (client.loop != NULL) {
-        ev_loop_destroy(client.loop);
-    }
-    if (client.config != NULL) {
-        quic_config_free(client.config);
-    }
-    return 0;
-}
-int config_parse(neu_plugin_t *plugin, const char *setting, char *chost,
-                 char *cport)
+int config_parse(neu_plugin_t *plugin, const char *setting)
 {
     int   ret       = 0;
     char *err_param = NULL;
 
     neu_json_elem_t host = { .name = "host", .t = NEU_JSON_STR };
     neu_json_elem_t port = { .name = "port", .t = NEU_JSON_INT };
-
+    neu_json_elem_t msg_buffer_size = { .name = "msg_buffer_size", .t =
+                                                                       NEU_JSON_INT };
     if (NULL == setting) {
-        plog_error(plugin, "test");
         plog_error(plugin, "invalid argument, null pointer");
         return -1;
     }
 
-    ret = neu_parse_param(setting, &err_param, 2, &host, &port);
+    ret = neu_parse_param(setting, &err_param, 3, &host, &port,
+                          &msg_buffer_size);
     if (0 != ret) {
         plog_error(plugin, "parsing setting fail, key: `%s`", err_param);
         goto error;
@@ -102,14 +79,19 @@ int config_parse(neu_plugin_t *plugin, const char *setting, char *chost,
         plog_error(plugin, "setting invalid port: %" PRIi64, port.v.val_int);
         goto error;
     }
-    cport = (char *) malloc(sizeof(char) * 10);
-    chost = host.v.val_str;
-    snprintf(cport, 10, "%lld", (long long) port.v.val_int);
 
-    plog_notice(plugin, "config host            : %s", chost);
-    plog_notice(plugin, "config port            : %s", cport);
-    plugin->host = chost;
-    plugin->port = cport;
+    if (msg_buffer_size.v.val_int<0) {
+        plog_error(plugin, "setting invalid msg_buffer_size: %" PRIi64, msg_buffer_size.v.val_int);
+        goto error;
+    }
+
+    plugin->port = (char *) malloc(sizeof(char) * 10);
+    plugin->host = host.v.val_str;
+    snprintf(plugin->port, 10, "%lld", (long long) port.v.val_int);
+    plugin->msg_buffer_size = msg_buffer_size.v.val_int;
+    plog_notice(plugin, "config host            : %s", plugin->host);
+    plog_notice(plugin, "config port            : %s", plugin->port);
+    plog_notice(plugin, "config msg_buffer_size            : %hu", plugin->msg_buffer_size);
     return 0;
 
 error:
@@ -158,19 +140,13 @@ static int driver_config(neu_plugin_t *plugin, const char *setting)
         "plugin============================================================\n");
     int rv = 0;
 
-    if (0 != config_parse(plugin, setting, plugin->host, plugin->port)) {
+    if (0 != config_parse(plugin, setting)) {
         rv = NEU_ERR_NODE_SETTING_INVALID;
         goto error;
     }
 
-    // stop the plugin if started
-    // if (plugin->started) {
-    //     stop(plugin);
-    // }
-
-    // check we could start the plugin with the new setting
-
-    plog_notice(plugin, "config host:%s port:%s", plugin->host, plugin->port);
+    plog_notice(plugin, "config host:%s port:%s msg_buffer_size:%hu",
+                plugin->host, plugin->port,plugin->msg_buffer_size);
 
     return rv;
 
@@ -251,7 +227,7 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
 
     // check link status once every 3 seconds
     plugin->timer++;
-//    plog_notice(plugin,"计时器:%d",plugin->timer);
+    plog_notice(plugin,"计时器:%d",plugin->timer);
     if(plugin->timer % 3 == 0){
         plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
         pthread_t thread_id;

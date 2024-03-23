@@ -84,7 +84,7 @@ int check_upload_threshold(sqlite3 *db, int threshold){
     sqlite3_finalize(stmt);
     return count >= threshold;
 }
-char *read_records(sqlite3 *db, char *table_name,int threshold){
+char *read_records(sqlite3 *db, char *table_name,u_int16_t threshold){
     sqlite3_stmt *select_stmt;
     sqlite3_stmt *update_stmt;
     int rc;
@@ -113,7 +113,7 @@ char *read_records(sqlite3 *db, char *table_name,int threshold){
         return NULL;
     }
     if (threshold > 0) {
-        sqlite3_bind_int(select_stmt, 1, threshold);
+        sqlite3_bind_int(select_stmt, 1, (int)threshold);
     }
     char *json_array = (char *)malloc(sizeof(char)+1);
     strcpy(json_array,"[");

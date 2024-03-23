@@ -17,9 +17,10 @@ static ev_io                     watcher;
 int parse_send_data(neu_plugin_t *plugin, quic_conn_t *conn,
                     neu_reqresp_trans_data_t *trans_data)
 {
-    plog_notice(plugin, "start parse json ");
+    plog_notice(plugin, "start to send data to server");
     int              ret      = 0;
-    char            *json_str = read_records(plugin->db,plugin->table_name,0);
+    char            *json_str = read_records(plugin->db,plugin->table_name,
+                                             plugin->msg_buffer_size);
     plog_notice(plugin, "parse json str succeed: %s", json_str);
     size_t json_str_size = strlen(json_str)+1;
     plog_notice(plugin,"压缩前的数据bit数：8 * %lu = %lu:",json_str_size,json_str_size*8);
@@ -64,7 +65,7 @@ int handle_read_response(neu_plugin_t *plugin, neu_json_mqtt_t *mqtt_json,
 }
 int handle_insert_data(neu_plugin_t             *plugin,
                        neu_reqresp_trans_data_t *trans_data){
-    plog_notice(plugin, "start parse json ");
+    plog_notice(plugin, "start to parse data and insert data to database");
     int              ret      = 0;
     char            *json_str = NULL;
     json_read_resp_t resp     = {
@@ -77,7 +78,7 @@ int handle_insert_data(neu_plugin_t             *plugin,
         goto error;
 
     }
-    plog_notice(plugin, "parse json str succeed: %s", json_str);
+    plog_debug(plugin, "parse json str succeed: %s", json_str);
     cJSON *json = cJSON_Parse(json_str);
     if (json == NULL) {
         const char *error_ptr = cJSON_GetErrorPtr();
@@ -99,26 +100,29 @@ int handle_insert_data(neu_plugin_t             *plugin,
 
     // 获取"values"
     cJSON *values = cJSON_GetObjectItemCaseSensitive(json, "values");
+//    // 如果values字段为空，不插入该条记录
+//    if(values == NULL || !cJSON_IsObject(values)){
+//        ret = -1;
+//        plog_info(plugin,"plugin data is empty");
+//        goto error;
+//    }
 
     // 将 "values" 对象转换为 JSON 字符串
     char *values_str_unformatted = cJSON_PrintUnformatted(values);
 
-
     cJSON *errors = cJSON_GetObjectItemCaseSensitive(json, "errors");
+    // 将 "errors" 对象转换为 JSON 字符串
+    char *errors_str_unformatted = cJSON_PrintUnformatted(errors);
     cJSON *metas = cJSON_GetObjectItemCaseSensitive(json, "metas");
+    // 将 "metas" 对象转换为 JSON 字符串
+    char *metas_str_unformatted = cJSON_PrintUnformatted(metas);
 
     ret = insert_data(plugin->db,plugin->table_name,node_name->valuestring,
                 group_name->valuestring,(long)timestamp->valuedouble,
-                values_str_unformatted,errors->valuestring,metas->valuestring);
+                values_str_unformatted,errors_str_unformatted,metas_str_unformatted);
     // 清理JSON对象
     cJSON_Delete(json);
     free(values_str_unformatted);
-//    cJSON_Delete(node_name);
-//    cJSON_Delete(group_name);
-//    cJSON_Delete(timestamp);
-//    cJSON_Delete(values);
-//    cJSON_Delete(errors);
-//    cJSON_Delete(metas);
     return ret;
 error:
     return ret;

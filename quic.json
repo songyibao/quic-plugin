@@ -23,5 +23,18 @@
       "min": 1024,
       "max": 65535
     }
+  },
+  "msg_buffer_size": {
+    "name": "Number of data items",
+    "name_zh": "数据条目数",
+    "description": "The number of data entries carried in each request, 0 means no limit",
+    "description_zh": "每次请求所携带的数据条目数，为0表示不限制",
+    "attribute": "required",
+    "type": "int",
+    "default": 100,
+    "valid": {
+      "min": 0,
+      "max": 65535
+    }
   }
 }

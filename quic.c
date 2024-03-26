@@ -9,7 +9,6 @@
 #include "quic.h"
 #include "quic_config.h"
 #include "quic_handle.h"
-#include "zlib.h"
 #include "mysqlite.h"
 
 

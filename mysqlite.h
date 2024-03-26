@@ -15,7 +15,7 @@ int insert_data(sqlite3 *db, const char *table_name, const char *node_name,
                  const char *group_name, long timestamp, const char *values,
                  const char *errors, const char *metas);
 int check_upload_threshold(sqlite3 *db, int threshold);
-char *read_records(sqlite3 *db, char *table_name,int threshold);
+char *read_records(sqlite3 *db, char *table_name,uint16_t threshold);
 // 关闭数据库连接
 void close_database(sqlite3 *db);
 #endif // NEURON_MYSQLITE_H

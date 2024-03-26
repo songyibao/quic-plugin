@@ -122,7 +122,9 @@ int handle_insert_data(neu_plugin_t             *plugin,
                 values_str_unformatted,errors_str_unformatted,metas_str_unformatted);
     // 清理JSON对象
     cJSON_Delete(json);
-    free(values_str_unformatted);
+    cJSON_free(values_str_unformatted);
+    cJSON_free(errors_str_unformatted);
+    cJSON_free(metas_str_unformatted);
     return ret;
 error:
     return ret;

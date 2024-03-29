@@ -226,7 +226,7 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
 
     // check link status once every 3 seconds
     plugin->timer++;
-    plog_notice(plugin,"计时器:%d",plugin->timer);
+//    plog_notice(plugin,"计时器:%d",plugin->timer);
     if(plugin->timer % 3 == 0){
         plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
         pthread_t thread_id;

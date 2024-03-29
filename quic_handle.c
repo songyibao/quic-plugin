@@ -8,7 +8,7 @@
 #include "quic_handle.h"
 #include "mysqlite.h"
 #include <cjson/cJSON.h>
-
+#include "message.h"
 static neu_reqresp_trans_data_t *local_trans_data;
 static ev_io                     watcher;
 
@@ -19,18 +19,21 @@ int parse_send_data(neu_plugin_t *plugin, quic_conn_t *conn,
 {
     plog_notice(plugin, "start to send data to server");
     int              ret      = 0;
-    char            *json_str = read_records(plugin->db,plugin->table_name,
+    char            *data_json_str = read_records(plugin->db,plugin->table_name,
                                              plugin->msg_buffer_size);
-    plog_notice(plugin, "parse json str succeed: %s", json_str);
+    plog_notice(plugin, "parse json str succeed: %s", data_json_str);
+    Message quic_message = create_message(SendDataRequest,"transferring data",SEND_DATA,
+                                           data_json_str);
+    char *json_str = serialize_message(&quic_message);
     size_t json_str_size = strlen(json_str)+1;
     plog_notice(plugin,"压缩前的数据bit数：8 * %lu = %lu:",json_str_size,json_str_size*8);
-    char* original_str = (char *)malloc(json_str_size);
-    memcpy(original_str,json_str,json_str_size);
+
     unsigned char* compressed_str;
     size_t compressed_size;
 
     // 压缩
-    if(compress_string((const char *)original_str, &compressed_str, &compressed_size) == -1){
+    if(compress_string((const char *)json_str, &compressed_str, &compressed_size) ==
+        -1){
         ret = -1;
         goto error;
     }
@@ -43,8 +46,13 @@ int parse_send_data(neu_plugin_t *plugin, quic_conn_t *conn,
 
     quic_stream_write(conn, 0, (uint8_t *) compressed_str, compressed_size, true);
     free(compressed_str);
+
+    // 与"free(quic_message.data);
+    // "同效用，释放的是同一块内存，因为其指向真实的生产数据，数据量可能过大，不适合再进行内存拷贝，所以"create_message
+    // "函数直接使用了传入的指针，即不再进行内存拷贝，所以在释放"quic_message.data"时，也会释放"json_str"指向的内存
+    free(data_json_str);
+
     free(json_str);
-    free(original_str);
     return 0;
 error:
     plog_notice(plugin,"压缩失败");
@@ -76,7 +84,6 @@ int handle_insert_data(neu_plugin_t             *plugin,
     if (ret != 0) {
         plog_notice(plugin, "parse json failed");
         goto error;
-
     }
     plog_debug(plugin, "parse json str succeed: %s", json_str);
     cJSON *json = cJSON_Parse(json_str);

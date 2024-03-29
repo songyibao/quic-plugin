@@ -5,7 +5,9 @@ set(src
         client.c
         json_rw.c
         quic_handle.c
-        mysqlite.c)
+        mysqlite.c
+        message.c
+)
 
 add_library(plugin-quic SHARED ${src})
 

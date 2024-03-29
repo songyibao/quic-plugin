@@ -2,7 +2,7 @@
 #include "client.h"
 #include "quic.h"
 #include "zlib.h"
-
+#include "message.h"
 
 void client_on_stream_writable(void *tctx, struct quic_conn_t *conn,uint64_t stream_id)
 {
@@ -18,12 +18,18 @@ void client_on_conn_closed(void *tctx, struct quic_conn_t *conn)
 }
 void client_on_conn_established(void *tctx, struct quic_conn_t *conn)
 {
-    const char *data = "GET /\r\n";
+    // 注意：静态分配的字符串不能用free释放，所以这里不调用free_message函数
+    Message hello_msg = create_message(HelloRequest,"keep alive",HELLO,"[]");
+
+    char *data = serialize_message(&hello_msg);
     unsigned char * compressed;
     size_t compressed_size=0;
     assert(compress_string(data,&compressed,&compressed_size) == Z_OK);
 
     quic_stream_write(conn, 0, (uint8_t *)compressed, compressed_size, true);
+
+    free(data);
+    free(compressed);
 }
 const struct quic_transport_methods_t quic_transport_methods = {
     .on_conn_created     = client_on_conn_created,

@@ -16,6 +16,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+
 #include "openssl/ssl.h"
 #include "tquic.h"
 #include "neuron.h"
@@ -36,6 +37,7 @@ typedef struct simple_client {
     SSL_CTX                *ssl_ctx; //
     struct quic_conn_t     *conn;
     struct ev_loop         *loop; //
+    neu_plugin_t *plugin; // 传入回调函数的上下文信息
 } simple_client_t;
 typedef void (*TimeoutCallback)(EV_P_ ev_timer *w, int revents);
 typedef void (*OnConnEstablishedCallback)(void *tctx, struct quic_conn_t *conn);
@@ -56,9 +58,11 @@ void process_connections(struct simple_client *client);
 void read_callback(EV_P_ ev_io *w, int revents);
 void example_timeout_callback(EV_P_ ev_timer *w, int revents);
 void debug_log(const unsigned char *line, void *argp);
-int create_socket(const char *host, const char *port,struct addrinfo **peer, struct simple_client *client);
+int create_socket(const char *local_host,const char *host, const char *port,
+                                                             struct addrinfo **peer, struct simple_client *client);
 extern char s_alpn[0x100];
 extern const struct quic_transport_methods_t quic_transport_methods;
 extern const struct quic_packet_send_methods_t quic_packet_send_methods;
-int new_client(neu_plugin_t *plugin, TimeoutCallback timeout_callback, OnConnEstablishedCallback on_conn_established_callback);
+int new_client(neu_plugin_t *plugin, uint8_t local_ip_index, TimeoutCallback
+                                                                                                            timeout_callback, OnConnEstablishedCallback on_conn_established_callback);
 #endif

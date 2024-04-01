@@ -4,18 +4,28 @@
 #include "client.h"
 #include "ev.h"
 #include <sqlite3.h>
+#include "quic_utils.h"
 
+#define MAX_IPS 10
+#define MAX_IP_LEN 16 // Assuming IPv4 addresses are in the format "xxx.xxx.xxx.xxx\0"
 struct neu_plugin {
     neu_plugin_common_t  common;
     char                *host;
     char                *port;
     bool                 started;
     unsigned char timer;
+
     sqlite3 *db;
+
     char *table_name;
     uint16_t msg_buffer_size;
+
+    char *ips[MAX_IPS];
+    uint8_t ip_count;
+    pthread_t     thread_ids[MAX_IPS];
+    pthread_t keep_alive_thread_id;
+    thread_args_t thread_args[MAX_IPS];
 };
-extern neu_plugin_t *local_plugin;
 static neu_plugin_t *driver_open(void);
 
 static int driver_close(neu_plugin_t *plugin);

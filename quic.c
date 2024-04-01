@@ -2,15 +2,15 @@
 // Created by songyibao on 24-2-29.
 //
 
-#include <stdlib.h>
-#include <pthread.h>
-#include "client.h"
-#include "neuron.h"
 #include "quic.h"
+#include "client.h"
+#include "mysqlite.h"
+#include "neuron.h"
 #include "quic_config.h"
 #include "quic_handle.h"
-#include "mysqlite.h"
-
+#include "quic_utils.h"
+#include <pthread.h>
+#include <stdlib.h>
 
 static const neu_plugin_intf_funs_t plugin_intf_funs = {
     .open    = driver_open,
@@ -40,10 +40,15 @@ const neu_plugin_module_t neu_plugin_module = {
     .display         = true,
     .single          = false,
 };
-neu_plugin_t *local_plugin;
 
-void* thread_function(void* arg) {
-    new_client(local_plugin,example_timeout_callback,client_on_conn_established);
+void *keep_alive_thread(void *arg)
+{
+    thread_args_t *local_args = (thread_args_t *) arg;
+    neu_plugin_t  *plugin     = local_args->plugin;
+    nlog_debug("Keep alive thread start");
+    nlog_debug("interface_index: %u", local_args->interface_index);
+    new_client(plugin, local_args->interface_index, example_timeout_callback,
+               client_on_conn_established);
     return NULL;
 }
 int config_parse(neu_plugin_t *plugin, const char *setting)
@@ -51,17 +56,18 @@ int config_parse(neu_plugin_t *plugin, const char *setting)
     int   ret       = 0;
     char *err_param = NULL;
 
-    neu_json_elem_t host = { .name = "host", .t = NEU_JSON_STR };
-    neu_json_elem_t port = { .name = "port", .t = NEU_JSON_INT };
-    neu_json_elem_t msg_buffer_size = { .name = "msg_buffer_size", .t =
-                                                                       NEU_JSON_INT };
+    neu_json_elem_t host            = { .name = "host", .t = NEU_JSON_STR };
+    neu_json_elem_t port            = { .name = "port", .t = NEU_JSON_INT };
+    neu_json_elem_t msg_buffer_size = { .name = "msg_buffer_size",
+                                        .t    = NEU_JSON_INT };
+    neu_json_elem_t ips             = { .name = "ips", .t = NEU_JSON_STR };
     if (NULL == setting) {
         plog_error(plugin, "invalid argument, null pointer");
         return -1;
     }
 
-    ret = neu_parse_param(setting, &err_param, 3, &host, &port,
-                          &msg_buffer_size);
+    ret = neu_parse_param(setting, &err_param, 4, &host, &port,
+                          &msg_buffer_size, &ips);
     if (0 != ret) {
         plog_error(plugin, "parsing setting fail, key: `%s`", err_param);
         goto error;
@@ -79,18 +85,47 @@ int config_parse(neu_plugin_t *plugin, const char *setting)
         goto error;
     }
 
-    if (msg_buffer_size.v.val_int<0) {
-        plog_error(plugin, "setting invalid msg_buffer_size: %" PRIi64, msg_buffer_size.v.val_int);
+    if (msg_buffer_size.v.val_int < 0) {
+        plog_error(plugin, "setting invalid msg_buffer_size: %" PRIi64,
+                   msg_buffer_size.v.val_int);
         goto error;
     }
-
+    // ips, required
+    if (0 == strlen(ips.v.val_str)) {
+        plog_error(plugin, "setting invalid host: `%s`", ips.v.val_str);
+        goto error;
+    }
     plugin->port = (char *) malloc(sizeof(char) * 10);
     plugin->host = host.v.val_str;
     snprintf(plugin->port, 10, "%lld", (long long) port.v.val_int);
     plugin->msg_buffer_size = msg_buffer_size.v.val_int;
+
+    char *token;
+    // 复制ips.v.val_str
+    char *tmp = (char *) malloc(sizeof(char) * (strlen(ips.v.val_str) + 1));
+    strcpy(tmp, ips.v.val_str);
+    // Extracting the first token
+    token = strtok(tmp, ";");
+
+    int i = 0;
+    // Loop through the string to extract all other tokens
+    while (token != NULL && i < MAX_IPS) {
+        plugin->ips[i] = token;
+        token          = strtok(NULL, ";");
+        i++;
+    }
+    plugin->ip_count = i;
+
     plog_notice(plugin, "config host            : %s", plugin->host);
     plog_notice(plugin, "config port            : %s", plugin->port);
-    plog_notice(plugin, "config msg_buffer_size            : %hu", plugin->msg_buffer_size);
+    plog_notice(plugin, "config msg_buffer_size            : %hu",
+                plugin->msg_buffer_size);
+    // Printing the extracted IPs
+    printf("Extracted IPs:");
+    plog_notice(plugin, "config %d ips:", plugin->ip_count);
+    for (int j = 0; j < i; j++) {
+        plog_notice(plugin, "%s", plugin->ips[j]);
+    }
     return 0;
 
 error:
@@ -118,7 +153,6 @@ static int driver_close(neu_plugin_t *plugin)
 
 static int driver_init(neu_plugin_t *plugin, bool load)
 {
-    local_plugin = plugin;
     (void) load;
     plog_notice(
         plugin,
@@ -132,7 +166,6 @@ static int driver_init(neu_plugin_t *plugin, bool load)
 }
 static int driver_config(neu_plugin_t *plugin, const char *setting)
 {
-    local_plugin = plugin;
     plog_notice(
         plugin,
         "============================================================\nconfig "
@@ -144,61 +177,60 @@ static int driver_config(neu_plugin_t *plugin, const char *setting)
         goto error;
     }
 
-    plog_notice(plugin, "config host:%s port:%s msg_buffer_size:%hu",
-                plugin->host, plugin->port,plugin->msg_buffer_size);
-
     return rv;
 
-    error:
-        plog_error(plugin, "config failure");
+error:
+    plog_error(plugin, "config failure");
     return rv;
 }
 
 static int driver_start(neu_plugin_t *plugin)
 {
-//    if (plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED){
-//        return NEU_ERR_NODE_NOT_READY;
-//    }
+    //    if (plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED){
+    //        return NEU_ERR_NODE_NOT_READY;
+    //    }
 
     plog_notice(
         plugin,
         "============================================================\nstart "
         "plugin============================================================\n");
-    local_plugin = plugin;
 
     plugin->table_name = "json_data";
-    init_database(&(plugin->db),"persistence/quic.db");
-    if(!table_exists(plugin->db,plugin->table_name)){
-        create_table(plugin->db,plugin->table_name);
+    init_database(&(plugin->db), "persistence/quic.db");
+    if (!table_exists(plugin->db, plugin->table_name)) {
+        create_table(plugin->db, plugin->table_name);
     }
 
-    //timer init to 0
+    // timer init to 0
     plugin->timer = 0;
     // start plugin
     plugin->started = true;
-//    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+    //    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
 
     return 0;
 }
 
 static int driver_stop(neu_plugin_t *plugin)
 {
-    local_plugin = NULL;
     plog_notice(
         plugin,
         "============================================================\nstop "
         "plugin============================================================\n");
+    pthread_join(plugin->keep_alive_thread_id, NULL);
+    for (int i = 0; i < plugin->ip_count; i++) {
+        pthread_join(plugin->thread_ids[i], NULL);
+    }
+
     // stop plugin
     plugin->started = false;
     // plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-//    free_client(plugin->client);
+    //    free_client(plugin->client);
     close_database(plugin->db);
     return 0;
 }
 
 static int driver_uninit(neu_plugin_t *plugin)
 {
-    local_plugin = NULL;
     plog_notice(
         plugin,
         "============================================================\nuninit "
@@ -221,52 +253,48 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
         plugin,
         "============================================================\nrequest "
         "plugin============================================================\n");
-//    fprintf(stdout,"Start request function");
-    local_plugin = plugin;
+    neu_err_code_e error = NEU_ERR_SUCCESS;
 
     // check link status once every 3 seconds
     plugin->timer++;
-//    plog_notice(plugin,"计时器:%d",plugin->timer);
-    if(plugin->timer % 3 == 0){
+    //    plog_notice(plugin,"计时器:%d",plugin->timer);
+    if (plugin->timer % 3 == 0) {
         plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-        pthread_t thread_id;
-        if (pthread_create(&thread_id, NULL, &thread_function, NULL) != 0) {
+        (plugin->thread_args)[0].plugin = plugin;
+        (plugin->thread_args)[0].interface_index = 0;
+        if (pthread_create(&plugin->keep_alive_thread_id, NULL,
+                           keep_alive_thread, &(plugin->thread_args)[0]) != 0) {
             printf("Error creating thread.\n");
         }
     }
-    if(plugin->timer % 10 == 0 && plugin->common.link_state
-            ==NEU_NODE_LINK_STATE_CONNECTED && plugin->started == true){
-        plog_notice(plugin,"10 秒传输一次数据");
-        handle_trans_data(plugin,data);
-    }
-
-    neu_err_code_e error = NEU_ERR_SUCCESS;
-//    if(plugin->started == false || plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED) {
-//        error = NEU_ERR_NODE_IS_STOPED;
-//        goto exit;
-//    }
-    if(plugin->started == false) {
+    if (plugin->started == false ||
+        plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED) {
         error = NEU_ERR_NODE_IS_STOPED;
         goto exit;
     }
-
+    if (plugin->timer % 10 == 0 &&
+        plugin->common.link_state == NEU_NODE_LINK_STATE_CONNECTED &&
+        plugin->started == true) {
+        plog_notice(plugin, "10 秒传输一次数据");
+        handle_trans_data(plugin, data);
+    }
 
     switch (head->type) {
 
     case NEU_REQRESP_TRANS_DATA: {
-//        if(plugin->common.link_state == false) {
-//            error = NEU_ERR_NODE_NOT_READY;
-//            goto exit;
-//        }
-        if(plugin->started == false){
+        //        if(plugin->common.link_state == false) {
+        //            error = NEU_ERR_NODE_NOT_READY;
+        //            goto exit;
+        //        }
+        if (plugin->started == false) {
             error = NEU_ERR_NODE_NOT_READY;
             goto exit;
         }
         NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_5S, 1, NULL);
         NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_30S, 1, NULL);
         NEU_PLUGIN_UPDATE_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 1, NULL);
-        error = handle_insert_data(plugin,data);
-//        error = handle_trans_data(plugin, data);
+        error = handle_insert_data(plugin, data);
+        //        error = handle_trans_data(plugin, data);
         break;
     }
     default:

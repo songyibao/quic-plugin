@@ -4,6 +4,7 @@
 
 #ifndef NEURON_MYSQLITE_H
 #define NEURON_MYSQLITE_H
+#include "sqlite3.h"
 int init_database(sqlite3 **db, char *file);
 
 int table_exists(sqlite3 *db, char *table_name);

@@ -28,13 +28,25 @@
     "name": "Number of data items",
     "name_zh": "数据条目数",
     "description": "The number of data entries carried in each request, 0 means no limit",
-    "description_zh": "每次请求所携带的数据条目数，为0表示不限制",
+    "description_zh": "每次请求所携带的数据条目数，为 0 表示不限制",
     "attribute": "required",
     "type": "int",
     "default": 100,
     "valid": {
       "min": 0,
       "max": 65535
+    }
+  },
+  "ips": {
+    "name": "Outbound Network Card List",
+    "name_zh": "出站网卡列表",
+    "description": "List of IP addresses of network cards used for concurrent data transmission. Multiple IP addresses are separated by colons \";\"",
+    "description_zh": "并发传输数据使用的网卡的ip地址列表，多个ip地址用冒号“;”分隔",
+    "attribute": "required",
+    "type": "string",
+    "default": "",
+    "valid": {
+      "length": 255
     }
   }
 }

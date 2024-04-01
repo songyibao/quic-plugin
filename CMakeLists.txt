@@ -7,6 +7,7 @@ set(src
         quic_handle.c
         mysqlite.c
         message.c
+        quic_utils.c
 )
 
 add_library(plugin-quic SHARED ${src})

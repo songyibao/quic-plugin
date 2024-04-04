@@ -47,8 +47,7 @@ void *keep_alive_thread(void *arg)
     neu_plugin_t  *plugin     = local_args->plugin;
     nlog_debug("Keep alive thread start");
     nlog_debug("interface_index: %u", local_args->interface_index);
-    new_client(plugin, local_args->interface_index, example_timeout_callback,
-               client_on_conn_established);
+    new_client(plugin, example_timeout_callback,client_on_conn_established);
     return NULL;
 }
 int config_parse(neu_plugin_t *plugin, const char *setting)
@@ -257,16 +256,10 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
 
     // check link status once every 3 seconds
     plugin->timer++;
-    //    plog_notice(plugin,"计时器:%d",plugin->timer);
     if (plugin->timer % 3 == 0) {
-        plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-        (plugin->thread_args)[0].plugin = plugin;
-        (plugin->thread_args)[0].interface_index = 0;
-        if (pthread_create(&plugin->keep_alive_thread_id, NULL,
-                           keep_alive_thread, &(plugin->thread_args)[0]) != 0) {
-            printf("Error creating thread.\n");
-        }
+        new_client(plugin, example_timeout_callback,client_on_conn_established);
     }
+
     if (plugin->started == false ||
         plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED) {
         error = NEU_ERR_NODE_IS_STOPED;

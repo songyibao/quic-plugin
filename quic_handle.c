@@ -71,8 +71,7 @@ void *thread_trans_data(void *arg)
 {
     thread_args_t *local_args = (thread_args_t *) arg;
 
-    new_client(local_args->plugin, local_args->interface_index,
-               example_timeout_callback, on_conn_established);
+    new_client(local_args->plugin,example_timeout_callback, on_conn_established);
     return NULL;
 }
 
@@ -153,25 +152,24 @@ int handle_trans_data(neu_plugin_t             *plugin,
 {
     int ret          = 0;
     local_trans_data = trans_data;
-
-//    pthread_t     thread_id[plugin->ip_count];
-    for (int i = 0; i < plugin->ip_count; i++) {
-        (plugin->thread_args)[i].plugin          = plugin;
-        (plugin->thread_args)[i].interface_index = i;
-    }
-    // 创建多线程并传递参数
-    for (int i = 0; i < plugin->ip_count; i++) {
-        plog_notice(plugin, "Create thread %d/%d.\n", i + 1, plugin->ip_count);
-        if (pthread_create(&plugin->thread_ids[i], NULL, thread_trans_data,
-&(plugin->thread_args)[i]) !=
-            0) {
-            plog_error(plugin, "Error creating thread %d.\n", i);
-        }
-    }
-
-    local_trans_data = NULL;
-    plog_notice(plugin, "Exit handle_trans_data function");
-    return ret;
+    new_client(plugin,example_timeout_callback, on_conn_established);
+//     for (int i = 0; i < plugin->ip_count; i++) {
+//         (plugin->thread_args)[i].plugin          = plugin;
+//         (plugin->thread_args)[i].interface_index = i;
+//     }
+//     // 创建多线程并传递参数
+//     for (int i = 0; i < plugin->ip_count; i++) {
+//         plog_notice(plugin, "Create thread %d/%d.\n", i + 1, plugin->ip_count);
+//         if (pthread_create(&plugin->thread_ids[i], NULL, thread_trans_data,
+// &(plugin->thread_args)[i]) !=
+//             0) {
+//             plog_error(plugin, "Error creating thread %d.\n", i);
+//         }
+//     }
+//
+//     local_trans_data = NULL;
+//     plog_notice(plugin, "Exit handle_trans_data function");
+     return ret;
 error:
     return ret;
 }

@@ -23,8 +23,23 @@ struct neu_plugin {
     char *ips[MAX_IPS];
     uint8_t ip_count;
     pthread_t     thread_ids[MAX_IPS];
-    pthread_t keep_alive_thread_id;
+    pthread_t thread_client_start_id;
+    thread_args_t thread_client_start_args;
     thread_args_t thread_args[MAX_IPS];
+
+
+    // quic client
+    quic_endpoint_t* quic_endpoint; //
+    quic_config_t* config; //
+    struct addrinfo* peer; //
+    ev_timer ev_timer;
+    ev_io *ev_watchers[MAX_IPS];
+    SSL_CTX* ssl_ctx; //
+    struct ev_loop* loop; //
+    quic_conn_t* conns[MAX_IPS];
+    int sock[MAX_IPS];
+    struct sockaddr_in local_addr[MAX_IPS];
+    socklen_t local_addr_len[MAX_IPS];
 };
 static neu_plugin_t *driver_open(void);
 

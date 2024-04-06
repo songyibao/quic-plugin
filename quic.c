@@ -13,41 +13,56 @@
 #include <stdlib.h>
 
 static const neu_plugin_intf_funs_t plugin_intf_funs = {
-    .open    = driver_open,
-    .close   = driver_close,
-    .init    = driver_init,
-    .uninit  = driver_uninit,
-    .start   = driver_start,
-    .stop    = driver_stop,
+    .open = driver_open,
+    .close = driver_close,
+    .init = driver_init,
+    .uninit = driver_uninit,
+    .start = driver_start,
+    .stop = driver_stop,
     .setting = driver_config,
     .request = driver_request,
 
     .driver.validate_tag = driver_validate_tag,
-    .driver.group_timer  = driver_group_timer,
-    .driver.write_tag    = driver_write,
+    .driver.group_timer = driver_group_timer,
+    .driver.write_tag = driver_write,
 };
 
 const neu_plugin_module_t neu_plugin_module = {
-    .schema          = "quic",
-    .version         = NEURON_PLUGIN_VER_1_0,
-    .module_name     = "quic",
-    .module_descr    = "quic plugin",
-    .module_descr_zh = "该插件用于连接使用 quic 协议的app。"
-                       "用户可选择作为客户端连接",
-    .intf_funs       = &plugin_intf_funs,
-    .kind            = NEU_PLUGIN_KIND_SYSTEM,
-    .type            = NEU_NA_TYPE_APP,
-    .display         = true,
-    .single          = false,
+    .schema = "quic",
+    .version = NEURON_PLUGIN_VER_1_0,
+    .module_name = "quic",
+    .module_descr = "quic plugin",
+    .module_descr_zh = "该插件用于连接使用 quic 协议的app,用户可选择作为客户端连接",
+    .intf_funs = &plugin_intf_funs,
+    .kind = NEU_PLUGIN_KIND_SYSTEM,
+    .type = NEU_NA_TYPE_APP,
+    .display = true,
+    .single = false,
 };
 
 void *keep_alive_thread(void *arg)
 {
     thread_args_t *local_args = (thread_args_t *) arg;
-    neu_plugin_t  *plugin     = local_args->plugin;
+    neu_plugin_t * plugin     = local_args->plugin;
     nlog_debug("Keep alive thread start");
     nlog_debug("interface_index: %u", local_args->interface_index);
-    new_client(plugin, example_timeout_callback,client_on_conn_established);
+    return NULL;
+}
+
+void *thread_trans_data(void *arg)
+{
+    thread_args_t *local_args = arg;
+    neu_plugin_t * plugin     = local_args->plugin;
+    neu_reqresp_trans_data_t *incoming_data = local_args->incoming_data;
+    nlog_debug("Thread write stream start");
+    nlog_debug("interface_index: %u", local_args->interface_index);
+    parse_send_data(plugin, plugin->conns[local_args->interface_index],incoming_data);
+    return NULL;
+}
+void *thread_client_start(void *arg)
+{
+    thread_args_t *local_args = arg;
+    start_quic_client(local_args->plugin);
     return NULL;
 }
 int config_parse(neu_plugin_t *plugin, const char *setting)
@@ -58,8 +73,8 @@ int config_parse(neu_plugin_t *plugin, const char *setting)
     neu_json_elem_t host            = { .name = "host", .t = NEU_JSON_STR };
     neu_json_elem_t port            = { .name = "port", .t = NEU_JSON_INT };
     neu_json_elem_t msg_buffer_size = { .name = "msg_buffer_size",
-                                        .t    = NEU_JSON_INT };
-    neu_json_elem_t ips             = { .name = "ips", .t = NEU_JSON_STR };
+                                        .t = NEU_JSON_INT };
+    neu_json_elem_t ips = { .name = "ips", .t = NEU_JSON_STR };
     if (NULL == setting) {
         plog_error(plugin, "invalid argument, null pointer");
         return -1;
@@ -114,7 +129,10 @@ int config_parse(neu_plugin_t *plugin, const char *setting)
         i++;
     }
     plugin->ip_count = i;
-
+    for (int j = 0; j < i; j++) {
+        plugin->thread_args[j].plugin          = plugin;
+        plugin->thread_args[j].interface_index = j;
+    }
     plog_notice(plugin, "config host            : %s", plugin->host);
     plog_notice(plugin, "config port            : %s", plugin->port);
     plog_notice(plugin, "config msg_buffer_size            : %hu",
@@ -134,6 +152,7 @@ error:
     // free(port.v.val_int);
     return -1;
 }
+
 static neu_plugin_t *driver_open(void)
 {
 
@@ -163,6 +182,7 @@ static int driver_init(neu_plugin_t *plugin, bool load)
     NEU_PLUGIN_REGISTER_METRIC(plugin, NEU_METRIC_TRANS_DATA_60S, 60000);
     return 0;
 }
+
 static int driver_config(neu_plugin_t *plugin, const char *setting)
 {
     plog_notice(
@@ -185,15 +205,12 @@ error:
 
 static int driver_start(neu_plugin_t *plugin)
 {
-    //    if (plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED){
-    //        return NEU_ERR_NODE_NOT_READY;
-    //    }
 
     plog_notice(
         plugin,
         "============================================================\nstart "
         "plugin============================================================\n");
-
+    // init sqlite3
     plugin->table_name = "json_data";
     init_database(&(plugin->db), "persistence/quic.db");
     if (!table_exists(plugin->db, plugin->table_name)) {
@@ -204,8 +221,13 @@ static int driver_start(neu_plugin_t *plugin)
     plugin->timer = 0;
     // start plugin
     plugin->started = true;
-    //    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
 
+    plugin->thread_client_start_args.plugin = plugin;
+    if (pthread_create(&plugin->thread_client_start_id, NULL,
+                       thread_client_start, &plugin->thread_client_start_args) != 0) {
+            printf("Error creating start thread.\n");
+                       }
+    // start_quic_client(plugin);
     return 0;
 }
 
@@ -215,15 +237,14 @@ static int driver_stop(neu_plugin_t *plugin)
         plugin,
         "============================================================\nstop "
         "plugin============================================================\n");
-    pthread_join(plugin->keep_alive_thread_id, NULL);
+    // pthread_join(plugin->keep_alive_thread_id, NULL);
     for (int i = 0; i < plugin->ip_count; i++) {
         pthread_join(plugin->thread_ids[i], NULL);
     }
+    // quic_endpoint_close(plugin->quic_endpoint,true);
 
     // stop plugin
     plugin->started = false;
-    // plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-    //    free_client(plugin->client);
     close_database(plugin->db);
     return 0;
 }
@@ -235,18 +256,22 @@ static int driver_uninit(neu_plugin_t *plugin)
         "============================================================\nuninit "
         "plugin============================================================\n");
 
-    // free(&plugin->client);
+
     free(plugin->host);
     free(plugin->port);
-    free(plugin);
+    // for(int i=0;i<plugin->ip_count;i++){
+    //     free(plugin->ips[i]);
+    // }
+    // free(plugin->table_name);
 
+    free(plugin);
     plog_notice(plugin, "uninitialize plugin `%s` success",
                 neu_plugin_module.module_name);
     return NEU_ERR_SUCCESS;
 }
 
 static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
-                          void *data)
+                          void *        data)
 {
     plog_notice(
         plugin,
@@ -256,21 +281,32 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
 
     // check link status once every 3 seconds
     plugin->timer++;
-    if (plugin->timer % 3 == 0) {
-        new_client(plugin, example_timeout_callback,client_on_conn_established);
-    }
+    // if (plugin->timer % 3 == 0) {
+    //     new_client(plugin, example_timeout_callback,
+    //                client_on_conn_established);
+    // }
 
     if (plugin->started == false ||
         plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED) {
         error = NEU_ERR_NODE_IS_STOPED;
         goto exit;
     }
-    if (plugin->timer % 10 == 0 &&
-        plugin->common.link_state == NEU_NODE_LINK_STATE_CONNECTED &&
-        plugin->started == true) {
-        plog_notice(plugin, "10 秒传输一次数据");
-        handle_trans_data(plugin, data);
-    }
+    // if (plugin->timer % 10 == 0 &&
+    //     plugin->common.link_state == NEU_NODE_LINK_STATE_CONNECTED &&
+    //     plugin->started == true) {
+    //     plog_notice(plugin, "10 秒传输一次数据");
+    //     // 创建多线程并传递参数
+    //     for (int i = 0; i < plugin->ip_count; i++) {
+    //         plog_notice(plugin, "Create thread %d/%d.\n", i + 1,
+    //                     plugin->ip_count);
+    //         plugin->thread_args[i].incoming_data = data;
+    //         if (pthread_create(&plugin->thread_ids[i], NULL, thread_trans_data,
+    //                            &plugin->thread_args[i]) !=
+    //             0) {
+    //             plog_error(plugin, "Error creating thread %d.\n", i);
+    //         }
+    //     }
+    // }
 
     switch (head->type) {
 
@@ -318,7 +354,7 @@ static int driver_group_timer(neu_plugin_t *plugin, neu_plugin_group_t *group)
 }
 
 static int driver_write(neu_plugin_t *plugin, void *req, neu_datatag_t *tag,
-                        neu_value_u value)
+                        neu_value_u   value)
 {
     (void) plugin;
     (void) req;

@@ -39,8 +39,10 @@ int parse_send_data(neu_plugin_t *plugin, quic_conn_t *conn,
         ret = -1;
         goto error;
     }
-    quic_stream_write(conn, 0, (uint8_t *) compressed_str, compressed_size,
-                      true);
+    quic_stream_wantwrite(conn, 1, true);
+    // 发送压缩后的数据，使用 id 为 1 的流
+    quic_stream_write(conn, 1, (uint8_t *) compressed_str, compressed_size,
+                      false);
 
     plog_notice(plugin, "压缩后的数据bit数：8 * %lu = %lu:", compressed_size,
                 compressed_size * 8);
@@ -60,20 +62,20 @@ error:
     plog_notice(plugin, "压缩失败");
     return ret;
 }
-void on_conn_established(void *tctx, struct quic_conn_t *conn)
-{
-    simple_client_t *client = (simple_client_t *) tctx;
-    quic_stream_wantwrite(conn, 0, true);
-    // Call function to send JSON data
-    parse_send_data(client->plugin, conn, local_trans_data);
-}
-void *thread_trans_data(void *arg)
-{
-    thread_args_t *local_args = (thread_args_t *) arg;
-
-    new_client(local_args->plugin,example_timeout_callback, on_conn_established);
-    return NULL;
-}
+// void on_conn_established(void *tctx, struct quic_conn_t *conn)
+// {
+//     simple_client_t *client = (simple_client_t *) tctx;
+//     quic_stream_wantwrite(conn, 0, true);
+//     // Call function to send JSON data
+//     parse_send_data(client->plugin, conn, local_trans_data);
+// }
+// void *thread_trans_data(void *arg)
+// {
+//     thread_args_t *local_args = (thread_args_t *) arg;
+//
+//     new_client(local_args->plugin,example_timeout_callback, on_conn_established);
+//     return NULL;
+// }
 
 int handle_read_response(neu_plugin_t *plugin, neu_json_mqtt_t *mqtt_json,
                          neu_resp_read_group_t *data)
@@ -152,23 +154,7 @@ int handle_trans_data(neu_plugin_t             *plugin,
 {
     int ret          = 0;
     local_trans_data = trans_data;
-    new_client(plugin,example_timeout_callback, on_conn_established);
-//     for (int i = 0; i < plugin->ip_count; i++) {
-//         (plugin->thread_args)[i].plugin          = plugin;
-//         (plugin->thread_args)[i].interface_index = i;
-//     }
-//     // 创建多线程并传递参数
-//     for (int i = 0; i < plugin->ip_count; i++) {
-//         plog_notice(plugin, "Create thread %d/%d.\n", i + 1, plugin->ip_count);
-//         if (pthread_create(&plugin->thread_ids[i], NULL, thread_trans_data,
-// &(plugin->thread_args)[i]) !=
-//             0) {
-//             plog_error(plugin, "Error creating thread %d.\n", i);
-//         }
-//     }
-//
-//     local_trans_data = NULL;
-//     plog_notice(plugin, "Exit handle_trans_data function");
+    // new_client(plugin,example_timeout_callback, on_conn_established);
      return ret;
 error:
     return ret;

@@ -140,7 +140,14 @@ char *read_records(sqlite3 *db, char *table_name, u_int16_t threshold)
 
         cJSON_AddItemToArray(json_array, json_object);
     }
-
+    if(id_arr_length==0) {
+        free(id_arr);
+        cJSON_Delete(json_array);
+        sqlite3_finalize(select_stmt);
+        sqlite3_free(select_sql);
+        sqlite3_exec(db, "COMMIT TRANSACTION", 0, 0, 0);
+        return cJSON_PrintUnformatted(cJSON_CreateArray());
+    }
     // 释放资源
     sqlite3_finalize(select_stmt);
     sqlite3_free(select_sql);

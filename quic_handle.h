@@ -3,7 +3,8 @@
 
 
 
-
+int parse_send_data(neu_plugin_t *plugin, quic_conn_t *conn,
+                    neu_reqresp_trans_data_t *trans_data);
 
 int handle_read_response(neu_plugin_t *plugin, neu_json_mqtt_t *mqtt_json,
                         neu_resp_read_group_t *data);

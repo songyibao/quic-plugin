@@ -45,3 +45,8 @@ char *serialize_message(const Message *message) {
     cJSON_Delete(root);
     return json_string;
 }
+
+char *new_quic_message_str(MessageType type, char *message, StatusCode status, char *data) {
+    Message new_message = create_message(type, message, status, data);
+    return serialize_message(&new_message);
+}

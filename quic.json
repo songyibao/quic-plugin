@@ -48,5 +48,18 @@
     "valid": {
       "length": 255
     }
+  },
+  "interval": {
+    "name": "Sending interval",
+    "name_zh": "发送时间间隔",
+    "description": "The time interval for sending data, also used for service detection",
+    "description_zh": "发送数据的时间间隔，同时用于服务探活",
+    "attribute": "required",
+    "type": "int",
+    "default": 5,
+    "valid": {
+      "min": 1,
+      "max": 65535
+    }
   }
 }

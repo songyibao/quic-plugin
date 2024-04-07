@@ -22,7 +22,6 @@ struct neu_plugin {
 
     char *ips[MAX_IPS];
     uint8_t ip_count;
-    pthread_t     thread_ids[MAX_IPS];
     pthread_t thread_client_start_id;
     thread_args_t thread_client_start_args;
     thread_args_t thread_args[MAX_IPS];
@@ -38,8 +37,13 @@ struct neu_plugin {
     struct ev_loop* loop; //
     quic_conn_t* conns[MAX_IPS];
     int sock[MAX_IPS];
+    uint8_t valid_sock_flag[MAX_IPS];
     struct sockaddr_in local_addr[MAX_IPS];
     socklen_t local_addr_len[MAX_IPS];
+
+    //send data interval
+    uint16_t interval;
+
 };
 static neu_plugin_t *driver_open(void);
 

@@ -26,27 +26,6 @@
 #define MAX_DATAGRAM_SIZE 1200
 #define MAX_IPS 10
 
-// A simple client that supports HTTP/0.9 over QUIC
-// typedef struct simple_client
-// {
-//     struct quic_endpoint_t* quic_endpoint; //
-//     quic_config_t* config; //
-//     struct addrinfo* peer; //
-//     ev_timer timer;
-//     // int                     sock; //
-//     // struct sockaddr_storage local_addr;
-//     // socklen_t               local_addr_len;
-//     SSL_CTX* ssl_ctx; //
-//     quic_conn_t* conn;
-//     struct ev_loop* loop; //
-//     neu_plugin_t* plugin; // 传入回调函数的上下文信息
-//
-//     char* ips[MAX_IPS];
-//     uint8_t ip_count;
-//     int sock[MAX_IPS];
-//     struct sockaddr_in local_addr[MAX_IPS];
-//     socklen_t local_addr_len[MAX_IPS];
-// } simple_client_t;
 
 typedef void (*TimeoutCallback)(EV_P_ ev_timer* w, int revents);
 typedef void (*OnConnEstablishedCallback)(void* tctx, quic_conn_t* conn);
@@ -61,6 +40,6 @@ int compress_string(const char* str, unsigned char** compressed, size_t* compres
 // int client_on_packets_send(void* psctx, quic_packet_out_spec_t* pkts, unsigned int count);
 
 
-int start_quic_client(neu_plugin_t *plugin);
+int start_quic_client(neu_plugin_t *plugin,float interval);
 
 #endif

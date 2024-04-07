@@ -3,8 +3,11 @@
 #include "mysqlite.h"
 #include "quic.h"
 #include "zlib.h"
+#include "../../src/daemon.h"
+
 #include <arpa/inet.h>
 #include <cjson/cJSON.h>
+#include <inttypes.h>
 
 typedef struct watcher_data {
     neu_plugin_t *plugin;
@@ -17,89 +20,107 @@ typedef struct keep_alive_data {
 } keep_alive_data_t;
 
 
-
-
-int send_data(neu_plugin_t *plugin,quic_conn_t *conn,uint64_t stream_id,int
-*fin)
+int send_data(neu_plugin_t *plugin, quic_conn_t *conn, uint64_t stream_id)
 {
-    plog_debug(plugin, "start to send data to server");
-    int   ret = 0;
+    // 无论如何都要保证有数据发送，否则会一直触发 on_stream_writable 事件
+    char    message[40]; // ip, 长度不超过16;其他信息，长度不超过24
+    Message quic_message = create_message(SendDataRequest, NULL, SEND_DATA,
+                                          NULL);
+    char *         json_str        = NULL;
+    size_t         json_str_size   = 0;
+    unsigned char *compressed_str  = NULL;
+    size_t         compressed_size = 0;
+    plog_debug(plugin, "Start to send data to server");
+    int   ret           = 0;
     char *data_json_str =
         read_records(plugin->db, plugin->table_name, plugin->msg_buffer_size);
-    if(strcmp(data_json_str,"[]")==0){
-        plog_debug(plugin,"no data to send");
-        cJSON_free(data_json_str);
-        ret=-1;
-        goto error;
+    if (strcmp(data_json_str, "[]") == 0) {
+        strcpy(message, quic_conn_context(conn)); // 最大16字节
+        strcat(message, "EmptyData");             // 9字节
+        plog_debug(plugin, "no data to send");
+        json_str = new_quic_message_str(SendDataRequest, message,
+                                        SEND_DATA, "[]");
+        ret = -1;
+    } else {
+        strcpy(message, quic_conn_context(conn)); // 最大16字节
+        plog_debug(plugin, "Sending data to server");
+        json_str = new_quic_message_str(SendDataRequest, message, SEND_DATA,
+                                        data_json_str);
+        ret = 0;
     }
+    json_str_size = strlen(json_str) + 1;
     plog_debug(plugin, "parse json str succeed: %s", data_json_str);
-    Message quic_message  = create_message(SendDataRequest, "transferring data",
-                                           SEND_DATA, data_json_str);
-    char   *json_str      = serialize_message(&quic_message);
-    size_t  json_str_size = strlen(json_str) + 1;
     plog_debug(plugin, "压缩前的数据bit数：8 * %lu = %lu:", json_str_size,
-                json_str_size * 8);
-
-    unsigned char *compressed_str;
-    size_t         compressed_size;
-
+               json_str_size * 8);
     // 压缩
-    if (compress_string((const char *) json_str, &compressed_str,
-                        &compressed_size) == -1) {
-        ret = -2;
-        goto error;
-                        }
-    if(quic_stream_write(conn, stream_id, (uint8_t *) compressed_str,
-    compressed_size,
-                      true)!=compressed_size) {
-        plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-        ret=-3;
-        goto error;
+    if (compress_string(json_str, &compressed_str, &compressed_size) == -1) {
+        plog_error(plugin, "Compress failed");
+        json_str = new_quic_message_str(SendDataRequest, "Compress failed",
+                                        SEND_DATA,
+                                        "[]");
+        goto send;
     }
-    *fin = 1;
 
     plog_debug(plugin, "压缩后的数据bit数：8 * %lu = %lu:", compressed_size,
-                compressed_size * 8);
+               compressed_size * 8);
     plog_debug(plugin,
-                "压缩比例：%.2f:", 1.0 * compressed_size / json_str_size);
+               "压缩比例：%.2f:", 1.0 * compressed_size / json_str_size);
 
-    free(compressed_str);
-
-    // 与"free(quic_message.data);
-    // "同效用，释放的是同一块内存，因为其指向真实的生产数据，数据量可能过大，不适合再进行内存拷贝，所以"create_message
-    // "函数直接使用了传入的指针，即不再进行内存拷贝，所以在释放"quic_message.data"时，也会释放"json_str"指向的内存
-    free(data_json_str);
-
-    free(json_str);
-    return 0;
-error:
+send:
+    if (quic_stream_write(conn, stream_id, (uint8_t *) compressed_str,
+                          compressed_size,
+                          true) != compressed_size) {
+        plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+    } else {
+        plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
+    }
+    if (json_str != NULL) {
+        free(json_str);
+    }
+    if (compressed_str != NULL) {
+        free(compressed_str);
+    }
+    if (data_json_str != NULL) {
+        free(data_json_str);
+    }
     return ret;
 }
+
 void client_on_stream_closed(void *   tctx, quic_conn_t *conn,
                              uint64_t stream_id)
 {
     neu_plugin_t *plugin = tctx;
-    plog_debug(plugin, "client_on_stream_closed,stream id%ld", stream_id);
+    plog_debug(plugin, "Connection[%"PRIu64"],Stream[%"PRIu64"] closed",
+               quic_conn_index(conn), stream_id);
 }
 
-void client_on_conn_closed(void *tctx, struct quic_conn_t *conn)
+void client_on_conn_closed(void *tctx, quic_conn_t *conn)
 {
     neu_plugin_t *plugin = tctx;
-    plog_debug(plugin, "client_on_conn_closed");
+    plog_debug(plugin, "Connection[%"PRIu64"] closed", quic_conn_index(conn));
     // 停止并释放watcher
     for (int i = 0; i < plugin->ip_count; i++) {
-        if(conn != plugin->conns[i]){
+        if (conn != plugin->conns[i]) {
             continue;
         }
-        ev_io *watcher = plugin->ev_watchers[i];/* 你需要有某种方式来引用或存储每个创建的watcher */;
+        ev_io *watcher = plugin->ev_watchers[i];
+        /* 你需要有某种方式来引用或存储每个创建的watcher */
+        ;
         ev_io_stop(plugin->loop, watcher);
-        watcher_data_t *watcher_data = (watcher_data_t *)watcher->data;
+        watcher_data_t *watcher_data = (watcher_data_t *) watcher->data;
 
         // 如果有必要，释放watcher_data内部的资源
 
         free(watcher_data); // 释放watcher_data
-        free(watcher); // 释放watcher
+        free(watcher);      // 释放watcher
         break;
+    }
+    // quic_conn_close(conn,true,0,NULL,0);
+    if (quic_conn_is_idle_timeout(conn)) {
+        plog_debug(plugin, "连接超时，关闭连接:%lu", quic_conn_index(conn));
+        plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
+    } else if (quic_conn_is_closed(conn)) {
+        plog_debug(plugin, "连接正常关闭:%lu", quic_conn_index(conn));
     }
 }
 
@@ -107,7 +128,7 @@ void client_on_conn_created(void *tctx, quic_conn_t *conn)
 {
 
     neu_plugin_t *plugin = tctx;
-    plog_debug(plugin, "client_on_conn_created)");
+    plog_debug(plugin, "Connection[%"PRIu64"]created", quic_conn_index(conn));
     // quic_stream_wantwrite(conn, 0, true);
 
 }
@@ -115,14 +136,14 @@ void client_on_conn_created(void *tctx, quic_conn_t *conn)
 void client_on_conn_established(void *tctx, quic_conn_t *conn)
 {
     neu_plugin_t *plugin = tctx;
-    plog_debug(plugin, "client_on_conn_established");
+    plog_debug(plugin, "Connection[%"PRIu64"] established",
+               quic_conn_index(conn));
     // // id 0 is reserved for keepalive
     // quic_stream_new(conn, 0, 1, true);
     // // id 1 is reserved for data
     // quic_stream_new(conn, 1, 100, true);
-    quic_stream_new(conn,0,10,true);
+    quic_stream_new(conn, 0, 10,true);
     quic_stream_wantwrite(conn, 0, true);
-
 
 }
 
@@ -131,15 +152,18 @@ void client_on_stream_created(void *   tctx, quic_conn_t *conn,
                               uint64_t stream_id)
 {
     neu_plugin_t *plugin = tctx;
-    plog_debug(plugin, "client_on_stream_created,stream id%ld", stream_id);
+    plog_debug(plugin, "Connection[%"PRIu64"],Stream[%"PRIu64"] created",
+               quic_conn_index(conn), stream_id);
     // quic_stream_wantwrite(conn, stream_id,true);
 }
 
 void client_on_stream_readable(void *   tctx, quic_conn_t *conn,
                                uint64_t stream_id)
 {
+
     neu_plugin_t *plugin = tctx;
-    plog_debug(plugin, "client_on_stream_readable");
+    plog_debug(plugin, "Connection[%"PRIu64"],Stream[%"PRIu64"] readable",
+               quic_conn_index(conn), stream_id);
     static uint8_t buf[READ_BUF_SIZE];
     bool fin = false;
     ssize_t r = quic_stream_read(conn, stream_id, buf, READ_BUF_SIZE, &fin);
@@ -147,18 +171,18 @@ void client_on_stream_readable(void *   tctx, quic_conn_t *conn,
         fprintf(stderr, "stream[%ld] read error\n", stream_id);
         return;
     }
-    cJSON *json_data   = cJSON_Parse(buf);
-    if(json_data ==NULL) {
-        plog_debug(plugin,"json parse failed,close conn");
+    cJSON *json_data = cJSON_Parse(buf);
+    if (json_data == NULL) {
+        plog_debug(plugin, "json parse failed,close conn");
         const char *reason = "ok";
         quic_conn_close(conn, true, 0, (const uint8_t *) reason,
                         strlen(reason));
     }
-    int    status_code = cJSON_GetObjectItem(json_data, "status")->valueint;
+    int status_code = cJSON_GetObjectItem(json_data, "status")->valueint;
     // switch status_code
     switch (status_code) {
     case HELLO:
-        plog_debug(plugin,"server response hello");
+        plog_debug(plugin, "server response hello");
         plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
         break;
     case SEND_DATA:
@@ -168,63 +192,52 @@ void client_on_stream_readable(void *   tctx, quic_conn_t *conn,
         break;
     }
     if (fin) {
-        plog_debug(plugin,"stream[%ld] read fin,close conn", stream_id);
+        plog_debug(plugin, "stream[%ld] read fin,close conn[%lu]", stream_id,
+                   quic_conn_index(conn));
         const char *reason = "ok";
         quic_conn_close(conn, true, 0, (const uint8_t *) reason,
                         strlen(reason));
         // by default, node is connected after connection try
     }
 }
+
 void client_on_stream_writable(void *   tctx, quic_conn_t *conn,
                                uint64_t stream_id)
 {
     neu_plugin_t *plugin = tctx;
-    plog_debug(plugin, "client_on_stream_writable,stream id%ld", stream_id);
-    unsigned char *compressed;
-    size_t compressed_size = 0;
+    plog_debug(plugin, "Connection[%"PRIu64"],Stream[%"PRIu64"] writable",
+               quic_conn_index(conn), stream_id);
+    // ip, 长度不超过16
     char *message = quic_conn_context(conn);
 
-    if(plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED){
+    if (plugin->common.link_state == NEU_NODE_LINK_STATE_DISCONNECTED) {
+        unsigned char *compressed = NULL;
+        char *data = NULL;
+        size_t         compressed_size = 0;
         Message hello_msg = create_message(HelloRequest, message, HELLO, "[]");
-        char *data = serialize_message(&hello_msg);
-        assert(compress_string(data, (unsigned char **) &compressed, &compressed_size) == Z_OK);
-        if(quic_stream_write(conn,stream_id, compressed, compressed_size, false)
-         == compressed_size) {
+        data      = serialize_message(&hello_msg);
+        assert(
+            compress_string(data, (unsigned char **) &compressed, &
+                compressed_size) == Z_OK);
+        plog_debug(plugin,"Connection[%"PRIu64"],Stream[%"PRIu64"] 压缩完成",quic_conn_index(conn), stream_id);
+        if (quic_stream_write(conn, stream_id, compressed, compressed_size,
+                              true)
+            == compressed_size) {
+            plog_debug(plugin,"Connection[%"PRIu64"],Stream[%"PRIu64"] 写入流成功",quic_conn_index(conn), stream_id);
             plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
         }
-    }else {
-        char error_message[30];
-        int fin=0;
-        int ret = send_data(plugin,conn,stream_id,&fin);
-        if(ret==-3){
-            plog_error(plugin,"fatal error,send data failed");
-            plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-        }else {
-            if(fin==0) {
-                if(ret == -1) {
-                    strcpy(error_message,"NoDataToSend");
-                }else {
-                    strcpy(error_message,"CompressError");
-                }
-                Message data_msg = create_message(SendDataRequest,
-                error_message,
-SEND_DATA, "[]");
-                char *data = serialize_message(&data_msg);
-                assert(compress_string(data, (unsigned char **) &compressed, &compressed_size) == Z_OK);
-                if(quic_stream_write(conn,stream_id, compressed, compressed_size,
-                 true)
-                 == compressed_size) {
-                    plugin->common.link_state = NEU_NODE_LINK_STATE_CONNECTED;
-                 }
-            }else {
-                plog_debug(plugin,"Unknow error");
-            }
+        if(compressed!=NULL) {
+            free(compressed);
         }
+        if(data!=NULL) {
+            free(data);
+        }
+    } else {
+        send_data(plugin, conn, stream_id);
     }
-    // quic_stream_shutdown(conn,stream_id,1,0);
-    quic_stream_wantwrite(conn, stream_id, false);
-    // quic_stream_wantread(conn, stream_id, true);
+    // quic_stream_wantwrite(conn, stream_id, false);
 }
+
 int client_on_packets_send(void *       psctx, quic_packet_out_spec_t *pkts,
                            unsigned int count)
 {
@@ -376,7 +389,8 @@ void debug_log(const unsigned char *line, void *argp)
 int create_socket(const char *      host, const char *  port,
                   struct addrinfo **peer, neu_plugin_t *plugin)
 {
-    const struct addrinfo hints = {
+    int                   succ_count = 0;
+    const struct addrinfo hints      = {
         .ai_family = PF_UNSPEC,
         .ai_socktype = SOCK_DGRAM,
         .ai_protocol = IPPROTO_UDP
@@ -403,7 +417,8 @@ int create_socket(const char *      host, const char *  port,
         if (bind(plugin->sock[i], (struct sockaddr *) &local_addr,
                  sizeof(local_addr)) < 0) {
             perror("bind failed");
-            return -1;
+            plugin->valid_sock_flag[i] = 0;
+            continue;
         }
         // 让client->local_addr[i]的值等于local_addr
         plugin->local_addr[i]     = local_addr;
@@ -411,8 +426,9 @@ int create_socket(const char *      host, const char *  port,
         fprintf(stdout, "%d:Successfully bound to %s:%d\n", i,
                 inet_ntoa(plugin->local_addr[i].sin_addr),
                 ntohs(plugin->local_addr[i].sin_port));
+        plugin->valid_sock_flag[i] = 1;
     }
-    return 0;
+    return succ_count;
 }
 
 // 压缩 JSON 字符串
@@ -438,6 +454,13 @@ int compress_string(const char *str, unsigned char **compressed,
     *compressed_size = comp_length + sizeof(uLong);
     return 0;
 }
+static void check_stop_cb(EV_P_ ev_timer *w, int revents) {
+    neu_plugin_t *plugin = w->data;
+    if (plugin->started == false) {
+        plog_debug(plugin,"Stopping all event loop");
+        ev_break(EV_A_ EVBREAK_ALL); // 停止事件循环
+    }
+}
 void send_keepalive(EV_P_ ev_timer *w, int revents)
 {
     neu_plugin_t *plugin = w->data;
@@ -445,7 +468,9 @@ void send_keepalive(EV_P_ ev_timer *w, int revents)
     // Connect to server.
     plog_debug(plugin, "Connecting to server");
     for (int i = 0; i < plugin->ip_count; i++) {
-
+        if (plugin->valid_sock_flag[i] == 0) {
+            continue;
+        }
         uint64_t conn_index = -1;
         plog_debug(plugin, "第%d个连接", i);
         int ret = quic_endpoint_connect(plugin->quic_endpoint,
@@ -464,44 +489,26 @@ void send_keepalive(EV_P_ ev_timer *w, int revents)
         plog_debug(plugin, "new conn index: %ld\n", conn_index);
         plugin->conns[i] = quic_endpoint_get_connection(plugin->quic_endpoint,
             conn_index);
-        quic_conn_set_context(plugin->conns[i],plugin->ips[i]);
+        quic_conn_set_context(plugin->conns[i], plugin->ips[i]);
     }
     process_connections(plugin);
     plog_debug(plugin, "Start event loop");
     for (int i = 0; i < plugin->ip_count; i++) {
+        if (plugin->valid_sock_flag[i] == 0) {
+            continue;
+        }
         watcher_data_t *watcher_data = malloc(sizeof(watcher_data_t));
         watcher_data->plugin         = plugin;
         watcher_data->sock_index     = i;
         ev_io *watcher               = malloc(sizeof(struct ev_io));
         ev_io_init(watcher, read_callback, plugin->sock[i], EV_READ);
         ev_io_start(plugin->loop, watcher);
-        watcher->data = watcher_data;
+        watcher->data          = watcher_data;
         plugin->ev_watchers[i] = watcher;
     }
-
-
-    // keep_alive_data_t *arg = w->data;
-    // neu_plugin_t *     plugin = arg->plugin;
-    // quic_conn_t *      conn   = arg->conn;
-    //
-    // // 注意：静态分配的字符串不能用free释放，所以这里不调用free_message函数
-    // Message hello_msg = create_message(HelloRequest, "KeepAlive", HELLO, "[]");
-    //
-    // char *         data = serialize_message(&hello_msg);
-    // unsigned char *compressed;
-    // size_t         compressed_size = 0;
-    // assert(compress_string(data, &compressed, &compressed_size) == Z_OK);
-    // ssize_t res_size = quic_stream_write(conn, 0, compressed, compressed_size,
-    //                                      false);
-    // nlog_debug("res_size:%ld,compressed_size:%ld", res_size, compressed_size);
-    // if (res_size != compressed_size) {// 发送失败
-    //     plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
-    //     fprintf(stderr, "failed to send keepalive\n");
-    // }
-    // free(data);
-    // free(compressed);
 }
-const struct quic_transport_methods_t local_quic_transport_methods = {
+
+const quic_transport_methods_t local_quic_transport_methods = {
     .on_conn_created = client_on_conn_created,
     .on_conn_established = client_on_conn_established,
     .on_conn_closed = client_on_conn_closed,
@@ -511,7 +518,7 @@ const struct quic_transport_methods_t local_quic_transport_methods = {
     .on_stream_closed = client_on_stream_closed,
 };
 
-const struct quic_packet_send_methods_t local_quic_packet_send_methods = {
+const quic_packet_send_methods_t local_quic_packet_send_methods = {
     .on_packets_send = client_on_packets_send,
 };
 
@@ -560,7 +567,7 @@ int init_event_loop(neu_plugin_t *plugin)
 }
 
 
-int start_quic_client(neu_plugin_t *plugin)
+int start_quic_client(neu_plugin_t *plugin, float interval)
 {
 
     plugin->quic_endpoint = NULL;
@@ -576,10 +583,22 @@ int start_quic_client(neu_plugin_t *plugin)
     plog_debug(plugin, "Starting quic client");
     //create socket
     plog_debug(plugin, "Creating socket");
-    if (create_socket(plugin->host, plugin->port, &plugin->peer, plugin) != 0) {
-        plog_error(plugin, "failed to create socket\n");
+    int sock_count = create_socket(plugin->host, plugin->port, &plugin->peer,
+                                   plugin);
+    if (sock_count < plugin->ip_count) {
+        for (int i = 0; i < plugin->ip_count; i++) {
+            if (plugin->valid_sock_flag[i] == 0) {
+                plog_error(plugin, "failed to create socket %d with ip:%s", i,
+                           plugin->ips[i]);
+            }
+        }
+    } else if (sock_count == plugin->ip_count) {
+        plog_notice(plugin, "Successfully create all sockets");
+    } else {
+        plog_fatal(plugin, "Unknow error");
         goto EXIT;
     }
+
     plog_debug(plugin, "peer addr: %s",
                inet_ntoa(((struct sockaddr_in *) plugin->peer->ai_addr)->
                    sin_addr));
@@ -599,53 +618,25 @@ int start_quic_client(neu_plugin_t *plugin)
         plog_error(plugin, "failed to init event loop\n");
         goto EXIT;
     }
-    // // Connect to server.
-    // plog_debug(plugin, "Connecting to server");
-    // for (int i = 0; i < plugin->ip_count; i++) {
-    //
-    //     uint64_t conn_index = -1;
-    //     plog_debug(plugin, "第%d个连接", i);
-    //     int ret = quic_endpoint_connect(plugin->quic_endpoint,
-    //                                     (struct sockaddr *) &plugin->local_addr[
-    //                                         i], plugin->local_addr_len[i],
-    //                                     plugin->peer->ai_addr,
-    //                                     plugin->peer->ai_addrlen,
-    //                                     NULL /* client_name*/,
-    //                                     NULL /* session */, 0 /* session_len */,
-    //                                     NULL /* token */, 0 /* token_len */,
-    //                                     &conn_index);
-    //     plog_debug(plugin, "conn_index: %ld\n", conn_index);
-    //     if (ret < 0) {
-    //         plog_error(plugin, "new conn failed: %d\n", ret);
-    //         goto EXIT;
-    //     }
-    //     plog_debug(plugin, "new conn index: %ld\n", conn_index);
-    //     // process_connections(plugin);
-    //     plugin->conns[i] = quic_endpoint_get_connection(plugin->quic_endpoint,
-    //         conn_index);
-    // }
-    // process_connections(plugin);
-    //
-    // plog_debug(plugin, "Start event loop");
-    // for (int i = 0; i < plugin->ip_count; i++) {
-    //     watcher_data_t *watcher_data = malloc(sizeof(watcher_data_t));
-    //     watcher_data->plugin         = plugin;
-    //     watcher_data->sock_index     = i;
-    //     ev_io *watcher               = malloc(sizeof(struct ev_io));
-    //     ev_io_init(watcher, read_callback, plugin->sock[i], EV_READ);
-    //     ev_io_start(plugin->loop, watcher);
-    //     watcher->data = watcher_data;
-    // }
     // 初始化和启动保活定时器
     ev_timer *keepalive_timer = malloc(sizeof(ev_timer));
-    ev_timer_init(keepalive_timer, send_keepalive, 5.0, 5.0); // 每5秒发送一次保活包
+    // 每 interval 秒发送一次保活包
+    ev_timer_init(keepalive_timer, send_keepalive, 3.0, interval);
     keepalive_timer->data = plugin;
     ev_timer_start(plugin->loop, keepalive_timer);
 
-    // Start event loop.
-    ev_loop(plugin->loop, 0);
+    // 初始化定时器，假设每1秒检查一次 plugin->started 变量, 如果为false则停止事件循环
+    ev_timer check_stop_watcher;
+    ev_timer_init(&check_stop_watcher, check_stop_cb, 1, 1);
+    check_stop_watcher.data = plugin;
+    ev_timer_start(plugin->loop, &check_stop_watcher);
 
+    // 启动事件循环
+    ev_loop(plugin->loop, 0);
+    plog_debug(plugin,"Endpoint 事件循环结束,关闭插件");
 EXIT:
+    plog_debug(plugin,"开始释放资源");
+    quic_endpoint_close(plugin->quic_endpoint,false);
     if (plugin->peer != NULL) {
         freeaddrinfo(plugin->peer);
     }
@@ -667,5 +658,6 @@ EXIT:
     if (plugin->config != NULL) {
         quic_config_free(plugin->config);
     }
-    return -1;
+    plog_debug(plugin,"资源释放完成");
+    return 0;
 }

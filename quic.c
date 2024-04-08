@@ -42,8 +42,10 @@ const neu_plugin_module_t neu_plugin_module = {
 
 void *thread_client_start(void *arg)
 {
+    usleep(1000000);
     thread_args_t *local_args = arg;
     neu_plugin_t * plugin     = local_args->plugin;
+    plugin->started = true;
     start_quic_client(plugin, (float) plugin->interval);
     return NULL;
 }
@@ -105,12 +107,14 @@ int config_parse(neu_plugin_t *plugin, const char *setting)
     plugin->msg_buffer_size = msg_buffer_size.v.val_int;
     plugin->interval        = interval.v.val_int;
 
-    if(plugin->keepalive_watcher.active){
-        plog_debug(plugin,"重新设置keepalive_watcher定时器间隔");
-        // 使用 ev_timer_set 重新设置定时器
-        ev_timer_set(&plugin->keepalive_watcher, plugin->keepalive_watcher.at, plugin->interval);
-        // 使用 ev_timer_again 重新启动定时器以应用新的设置
-        ev_timer_again(plugin->loop, &plugin->keepalive_watcher);
+    if(plugin->started == true){
+        // 停止插件，并等待旧配置的endpoint自行销毁
+        plugin->started = false;
+        if (pthread_create(&plugin->thread_client_start_id, NULL,
+                           thread_client_start,
+                           &plugin->thread_client_start_args) != 0) {
+            printf("Error creating start thread.\n");
+        }
     }
 
 
@@ -133,6 +137,7 @@ int config_parse(neu_plugin_t *plugin, const char *setting)
         plugin->thread_args[j].plugin          = plugin;
         plugin->thread_args[j].interface_index = j;
     }
+
     plog_notice(plugin, "config host            : %s", plugin->host);
     plog_notice(plugin, "config port            : %s", plugin->port);
     plog_notice(plugin, "config msg_buffer_size            : %hu",
@@ -275,7 +280,6 @@ static int driver_request(neu_plugin_t *plugin, neu_reqresp_head_t *head,
         "============================================================request "
         "plugin============================================================\n");
     neu_err_code_e error = NEU_ERR_SUCCESS;
-
     if (plugin->started == false) {
         error = NEU_ERR_NODE_IS_STOPED;
         goto exit;

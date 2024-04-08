@@ -462,6 +462,7 @@ static void check_stop_cb(EV_P_ ev_timer *w, int revents) {
 void send_keepalive(EV_P_ ev_timer *w, int revents)
 {
     neu_plugin_t *plugin = w->data;
+    plugin->started = true;
     plog_debug(plugin, "send keepalive");
     // Connect to server.
     plog_debug(plugin, "Connecting to server");

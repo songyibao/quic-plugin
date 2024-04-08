@@ -39,7 +39,8 @@ int compress_string(const char* str, unsigned char** compressed, size_t* compres
 // void client_on_stream_readable(void* tctx, quic_conn_t* conn, uint64_t stream_id);
 // int client_on_packets_send(void* psctx, quic_packet_out_spec_t* pkts, unsigned int count);
 
-
+int create_socket(const char *      host, const char *  port,
+                  struct addrinfo **peer, neu_plugin_t *plugin);
 int start_quic_client(neu_plugin_t *plugin,float interval);
 
 #endif

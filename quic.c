@@ -105,6 +105,15 @@ int config_parse(neu_plugin_t *plugin, const char *setting)
     plugin->msg_buffer_size = msg_buffer_size.v.val_int;
     plugin->interval        = interval.v.val_int;
 
+    if(plugin->keepalive_watcher.active){
+        plog_debug(plugin,"重新设置keepalive_watcher定时器间隔");
+        // 使用 ev_timer_set 重新设置定时器
+        ev_timer_set(&plugin->keepalive_watcher, plugin->keepalive_watcher.at, plugin->interval);
+        // 使用 ev_timer_again 重新启动定时器以应用新的设置
+        ev_timer_again(plugin->loop, &plugin->keepalive_watcher);
+    }
+
+
     char *token;
     // 复制ips.v.val_str
     char *tmp = (char *) malloc(sizeof(char) * (strlen(ips.v.val_str) + 1));

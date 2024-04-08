@@ -338,7 +338,6 @@ void read_callback(EV_P_ ev_io *w, int revents)
     watcher_data_t *data       = w->data;
     neu_plugin_t *  plugin     = data->plugin;
     int             sock_index = data->sock_index;
-    fprintf(stdout, "%d:read_callback\n", sock_index);
     static uint8_t buf[READ_BUF_SIZE];
 
     while (true) {
@@ -381,10 +380,6 @@ void example_timeout_callback(EV_P_ ev_timer *w, int revents)
     process_connections(plugin);
 }
 
-void debug_log(const unsigned char *line, void *argp)
-{
-    fprintf(stderr, "%s\n", line);
-}
 
 int create_socket(const char *      host, const char *  port,
                   struct addrinfo **peer, neu_plugin_t *plugin)
@@ -458,6 +453,9 @@ static void check_stop_cb(EV_P_ ev_timer *w, int revents) {
     neu_plugin_t *plugin = w->data;
     if (plugin->started == false) {
         plog_debug(plugin,"Stopping all event loop");
+        ev_timer_stop(plugin->loop,&plugin->ev_timer);
+        ev_timer_stop(plugin->loop, &plugin->keepalive_watcher);
+        ev_timer_stop(plugin->loop, &plugin->check_stop_watcher);
         ev_break(EV_A_ EVBREAK_ALL); // 停止事件循环
     }
 }
@@ -619,17 +617,16 @@ int start_quic_client(neu_plugin_t *plugin, float interval)
         goto EXIT;
     }
     // 初始化和启动保活定时器
-    ev_timer *keepalive_timer = malloc(sizeof(ev_timer));
+//    ev_timer keepalive_watcher = malloc(sizeof(ev_timer));
     // 每 interval 秒发送一次保活包
-    ev_timer_init(keepalive_timer, send_keepalive, 3.0, interval);
-    keepalive_timer->data = plugin;
-    ev_timer_start(plugin->loop, keepalive_timer);
+    ev_timer_init(&plugin->keepalive_watcher, send_keepalive, 3.0, interval);
+    plugin->keepalive_watcher.data = plugin;
+    ev_timer_start(plugin->loop, &plugin->keepalive_watcher);
 
     // 初始化定时器，假设每1秒检查一次 plugin->started 变量, 如果为false则停止事件循环
-    ev_timer check_stop_watcher;
-    ev_timer_init(&check_stop_watcher, check_stop_cb, 1, 1);
-    check_stop_watcher.data = plugin;
-    ev_timer_start(plugin->loop, &check_stop_watcher);
+    ev_timer_init(&plugin->check_stop_watcher, check_stop_cb, 1, 1);
+    plugin->check_stop_watcher.data = plugin;
+    ev_timer_start(plugin->loop, &plugin->check_stop_watcher);
 
     // 启动事件循环
     ev_loop(plugin->loop, 0);

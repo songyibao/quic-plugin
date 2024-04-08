@@ -31,6 +31,8 @@ struct neu_plugin {
     quic_endpoint_t* quic_endpoint; //
     quic_config_t* config; //
     struct addrinfo* peer; //
+    ev_timer keepalive_watcher;
+    ev_timer check_stop_watcher;
     ev_timer ev_timer;
     ev_io *ev_watchers[MAX_IPS];
     SSL_CTX* ssl_ctx; //

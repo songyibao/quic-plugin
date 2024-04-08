@@ -242,6 +242,7 @@ static int driver_stop(neu_plugin_t *plugin)
     plog_debug(plugin,"等待线程结束");
     // stop plugin, set plugin->started to false
     plugin->started = false;
+    plugin->common.link_state = NEU_NODE_LINK_STATE_DISCONNECTED;
     pthread_join(plugin->thread_client_start_id, NULL);
     close_database(plugin->db);
     return 0;

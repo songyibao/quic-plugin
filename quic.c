@@ -106,18 +106,6 @@ int config_parse(neu_plugin_t *plugin, const char *setting)
     snprintf(plugin->port, 10, "%lld", (long long) port.v.val_int);
     plugin->msg_buffer_size = msg_buffer_size.v.val_int;
     plugin->interval        = interval.v.val_int;
-
-    if(plugin->started == true){
-        // 停止插件，并等待旧配置的endpoint自行销毁
-        plugin->started = false;
-        if (pthread_create(&plugin->thread_client_start_id, NULL,
-                           thread_client_start,
-                           &plugin->thread_client_start_args) != 0) {
-            printf("Error creating start thread.\n");
-        }
-    }
-
-
     char *token;
     // 复制ips.v.val_str
     char *tmp = (char *) malloc(sizeof(char) * (strlen(ips.v.val_str) + 1));
@@ -200,11 +188,21 @@ static int driver_config(neu_plugin_t *plugin, const char *setting)
         rv = NEU_ERR_NODE_SETTING_INVALID;
         goto error;
     }
+    if(plugin->started == true){
+        // 停止插件，等待1秒，旧配置的quic endpoint自行销毁,并创建新的quic endpoint
+        plugin->started = false;
+        if (pthread_create(&plugin->thread_client_start_id, NULL,
+                           thread_client_start,
+                           &plugin->thread_client_start_args) != 0) {
+            printf("Error creating start thread after config_parse fun.\n");
+        }
+    }
 
     return rv;
 
 error:
     plog_error(plugin, "config failure");
+    plugin->started = false;
     return rv;
 }
 
